@@ -428,19 +428,23 @@ export function HomeScreen() {
           <View className="flex-row gap-3">
             <View className="flex-1">
               <Field
+                blurOnSubmit
                 keyboardType="numeric"
                 label="Calories"
                 onChangeText={(text) => setPantryForm((current) => ({ ...current, caloriesPerServing: text }))}
                 placeholder="220"
+                returnKeyType="done"
                 value={pantryForm.caloriesPerServing}
               />
             </View>
             <View className="flex-1">
               <Field
+                blurOnSubmit
                 keyboardType="numeric"
                 label="Protein (g)"
                 onChangeText={(text) => setPantryForm((current) => ({ ...current, proteinPerServing: text }))}
                 placeholder="18"
+                returnKeyType="done"
                 value={pantryForm.proteinPerServing}
               />
             </View>
@@ -484,28 +488,34 @@ export function HomeScreen() {
           <View className="flex-row gap-3">
             <View className="flex-1">
               <Field
+                blurOnSubmit
                 keyboardType="numeric"
                 label="Servings"
                 onChangeText={(text) => setLogForm((current) => ({ ...current, servings: text }))}
                 placeholder="1"
+                returnKeyType="done"
                 value={logForm.servings}
               />
             </View>
             <View className="flex-1">
               <Field
+                blurOnSubmit
                 keyboardType="numeric"
                 label="Calories"
                 onChangeText={(text) => setLogForm((current) => ({ ...current, calories: text }))}
                 placeholder="450"
+                returnKeyType="done"
                 value={logForm.calories}
               />
             </View>
           </View>
           <Field
+            blurOnSubmit
             keyboardType="numeric"
             label="Protein (g)"
             onChangeText={(text) => setLogForm((current) => ({ ...current, protein: text }))}
             placeholder="30"
+            returnKeyType="done"
             value={logForm.protein}
           />
           <Field

@@ -1,4 +1,15 @@
-import { ActivityIndicator, Modal, Pressable, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type ButtonProps = {
@@ -45,6 +56,9 @@ type InputProps = {
   secureTextEntry?: boolean;
   multiline?: boolean;
   autoCapitalize?: 'none' | 'sentences' | 'words';
+  returnKeyType?: 'done' | 'next' | 'go' | 'search' | 'send';
+  blurOnSubmit?: boolean;
+  onSubmitEditing?: () => void;
 };
 
 export function Field({
@@ -56,6 +70,9 @@ export function Field({
   secureTextEntry,
   multiline,
   autoCapitalize = 'sentences',
+  returnKeyType,
+  blurOnSubmit,
+  onSubmitEditing,
 }: InputProps) {
   return (
     <View className="gap-2">
@@ -66,10 +83,13 @@ export function Field({
         keyboardType={keyboardType}
         multiline={multiline}
         onChangeText={onChangeText}
+        onSubmitEditing={onSubmitEditing}
         placeholder={placeholder}
         placeholderTextColor="#8e9a92"
+        returnKeyType={returnKeyType ?? (multiline ? 'default' : 'done')}
         secureTextEntry={secureTextEntry}
         value={value}
+        blurOnSubmit={blurOnSubmit ?? !multiline}
       />
     </View>
   );
@@ -108,17 +128,26 @@ export function ModalSheet({
 }) {
   return (
     <Modal animationType="slide" transparent visible={open}>
-      <View className="flex-1 justify-end bg-ink/35">
-        <SafeAreaView className="rounded-t-[32px] bg-oat px-5 pb-6 pt-4">
-          <View className="mb-4 flex-row items-center justify-between">
-            <Text className="font-display text-2xl text-pine">{title}</Text>
-            <Pressable onPress={onClose}>
-              <Text className="text-base font-semibold text-clay">Close</Text>
+      <Pressable className="flex-1 justify-end bg-ink/35" onPress={Keyboard.dismiss}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          className="justify-end"
+        >
+          <SafeAreaView className="max-h-[85%] rounded-t-[32px] bg-oat px-5 pb-6 pt-4">
+            <Pressable>
+              <View className="mb-4 flex-row items-center justify-between">
+                <Text className="font-display text-2xl text-pine">{title}</Text>
+                <Pressable onPress={onClose}>
+                  <Text className="text-base font-semibold text-clay">Close</Text>
+                </Pressable>
+              </View>
+              <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                {children}
+              </ScrollView>
             </Pressable>
-          </View>
-          {children}
-        </SafeAreaView>
-      </View>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
+      </Pressable>
     </Modal>
   );
 }

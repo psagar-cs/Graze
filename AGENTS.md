@@ -70,6 +70,9 @@ Setup expectations:
 
 ## Editing Guidance
 
+- Prioritize core functionality over broad visual polish while the product structure is still changing.
+- Fix high-friction usability issues immediately, especially anything that blocks normal mobile use.
+- Defer broad visual styling passes until the core flows and screen structure are stable.
 - Preserve the custom auth UI unless an intentional auth UX redesign is requested.
 - Preserve the current honest "preview" framing of the suggestions screen unless the actual recommendation engine is being built.
 - Prefer small, targeted changes over broad refactors.
