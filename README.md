@@ -6,6 +6,7 @@ Graze is an Expo/React Native prototype for fast, pantry-aware eating decisions.
 - Supabase-backed pantry items, food logs, and daily calorie/protein targets
 - Quick logging from pantry staples
 - A deterministic pantry-aware "What can I eat next?" engine
+- Suggested meal logging that saves one grouped entry while deducting pantry ingredients behind the scenes
 
 ## Setup
 
@@ -42,6 +43,7 @@ Open the app in Expo Go on iPhone and test the full loop:
 - Log food from pantry or manual entry
 - Review today summary
 - Open the Next tab and validate pantry-based suggestions
+- Log a suggested meal and confirm the grouped entry plus pantry deduction flow
 
 ## What Changed In v2
 
@@ -55,6 +57,7 @@ Open the app in Expo Go on iPhone and test the full loop:
   - calculated servings available
   - explicit stock clearing without archiving the ingredient
 - The `Next` tab now uses a deterministic suggestion engine instead of preview cards.
+- Suggested meals can now be logged directly from the `Next` tab as one grouped daily entry.
 - Suggestions are built from active pantry items and ranked against:
   - remaining calories and protein
   - low effort
@@ -62,6 +65,7 @@ Open the app in Expo Go on iPhone and test the full loop:
   - normal pantry pairings
   - avoiding repeated meals from today when possible
   - available pantry stock
+- Logging a suggested meal deducts each underlying pantry ingredient using its default serving amount scaled by the chosen meal servings.
 
 ## How The Suggestion Engine Works
 
@@ -87,10 +91,12 @@ The engine lives in [src/services/suggestionEngine.ts](/Users/PranavSagar/Deskto
 - Repetition detection is heuristic and may miss custom log names.
 - Feedback actions are local-only for now and do not persist across sessions.
 - Food-log calories and protein are still integer-backed; fractional pantry nutrition is supported, but logged nutrition has not been broadened yet.
+- Suggested meal logs are grouped entries, but users cannot yet reopen them to edit individual ingredient portions afterward.
 
 ## v3 Opportunities
 
 - Persist dismissed or accepted suggestions.
+- Allow logged entries to be edited or deleted later, including ingredient-level adjustments for grouped meal entries.
 - Add better pantry metadata guidance and smarter autofill.
 - Support structured inventory quantities.
 - Isolate any future LLM usage to explanation polish, not meal generation.
