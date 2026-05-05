@@ -1,6 +1,7 @@
 import { useAuth } from '@clerk/clerk-expo';
 import { useEffect, useState } from 'react';
 
+import { buildDefaultServingLabel, roundInventoryAmount } from '../lib/inventory';
 import { configureSupabaseAccessToken } from '../lib/supabase';
 import {
   archivePantryItem,
@@ -9,6 +10,7 @@ import {
   ensureProfile,
   getPantryItems,
   getTodayLogs,
+  updatePantryStock,
   updatePantryItem,
   updateProfileTargets,
 } from '../services/graze';
@@ -21,6 +23,56 @@ const stepLabels: Record<LoadStep, string> = {
   profile: 'profile',
   pantry: 'pantry items',
   todayLogs: "today's logs",
+};
+
+const getErrorParts = (value: unknown) => {
+  if (value instanceof Error) {
+    return {
+      message: value.message,
+      details: '',
+      hint: '',
+      code: '',
+    };
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+
+    return {
+      message: typeof record.message === 'string' ? record.message : '',
+      details: typeof record.details === 'string' ? record.details : '',
+      hint: typeof record.hint === 'string' ? record.hint : '',
+      code: typeof record.code === 'string' ? record.code : '',
+    };
+  }
+
+  return {
+    message: '',
+    details: '',
+    hint: '',
+    code: '',
+  };
+};
+
+const formatPantrySaveError = (saveError: unknown) => {
+  const { message, details, hint, code } = getErrorParts(saveError);
+  const normalizedMessage = [message, details, hint, code].join(' ').toLowerCase();
+
+  if (!normalizedMessage.trim()) {
+    return 'Unable to save pantry item.';
+  }
+
+  if (
+    normalizedMessage.includes('category')
+    || normalizedMessage.includes('effort_level')
+    || normalizedMessage.includes('meal_role')
+  ) {
+    return 'Pantry save failed because the v2 pantry metadata migration has not been run.';
+  }
+
+  const detailParts = [message, details, hint ? `Hint: ${hint}` : '', code ? `Code: ${code}` : ''].filter(Boolean);
+
+  return detailParts.join(' ');
 };
 
 const formatLoadError = (step: LoadStep, loadError: unknown) => {
@@ -54,16 +106,24 @@ export const buildTodaySummary = (
 
 const emptyPantryForm = (): PantryFormValues => ({
   name: '',
-  defaultServing: '',
+  servingAmount: '1',
+  servingUnit: 'serving',
+  stockEntryMode: 'amount',
+  stockAmount: '',
+  stockServings: '',
   caloriesPerServing: '',
   proteinPerServing: '',
   quantityLabel: '',
+  category: 'other',
+  effortLevel: 'assemble',
+  mealRole: 'main',
 });
 
 const emptyFoodLogForm = (): FoodLogFormValues => ({
   pantryItemId: null,
   customName: '',
   servings: '1',
+  amountUsed: '',
   calories: '',
   protein: '',
   notes: '',
@@ -160,10 +220,19 @@ export const useGrazeData = () => {
 
     const payload = {
       name: values.name.trim(),
-      default_serving: values.defaultServing.trim(),
+      default_serving: buildDefaultServingLabel(Number(values.servingAmount), values.servingUnit),
+      serving_amount: Number(values.servingAmount),
+      serving_unit: values.servingUnit,
+      stock_amount:
+        values.stockEntryMode === 'amount'
+          ? roundInventoryAmount(Number(values.stockAmount))
+          : roundInventoryAmount(Number(values.stockServings) * Number(values.servingAmount)),
       calories_per_serving: Number(values.caloriesPerServing),
       protein_per_serving: Number(values.proteinPerServing),
       quantity_label: values.quantityLabel.trim() || 'In stock',
+      category: values.category,
+      effort_level: values.effortLevel,
+      meal_role: values.mealRole,
     };
 
     try {
@@ -183,7 +252,8 @@ export const useGrazeData = () => {
         return [savedItem, ...current];
       });
     } catch (saveError) {
-      const message = saveError instanceof Error ? saveError.message : 'Unable to save pantry item.';
+      console.error('Graze pantry save failed:', saveError);
+      const message = formatPantrySaveError(saveError);
       setError(message);
       throw saveError;
     } finally {
@@ -213,6 +283,24 @@ export const useGrazeData = () => {
     }
   };
 
+  const clearPantryStock = async (item: PantryItem) => {
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const savedItem = await updatePantryStock(item.id, 0);
+
+      setPantryItems((current) =>
+        current.map((entry) => (entry.id === savedItem.id ? savedItem : entry)),
+      );
+    } catch (clearError) {
+      const message = clearError instanceof Error ? clearError.message : 'Unable to clear pantry stock.';
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const saveFoodLog = async (values: FoodLogFormValues) => {
     if (!userId) {
       return;
@@ -222,17 +310,51 @@ export const useGrazeData = () => {
     setError(null);
 
     try {
+      let nextPantryItem: PantryItem | null = null;
+      let amountUsed = 0;
+
+      if (values.pantryItemId) {
+        nextPantryItem = pantryItems.find((item) => item.id === values.pantryItemId) ?? null;
+
+        if (!nextPantryItem) {
+          throw new Error('Could not find that pantry item to deduct inventory.');
+        }
+
+        amountUsed = values.amountUsed.trim()
+          ? Number(values.amountUsed)
+          : Number(values.servings) * nextPantryItem.serving_amount;
+
+        if (!Number.isFinite(amountUsed) || amountUsed <= 0) {
+          throw new Error('Enter a valid pantry amount used.');
+        }
+
+        if (amountUsed - nextPantryItem.stock_amount > 0.0001) {
+          throw new Error(`Not enough ${nextPantryItem.name} in stock for that log.`);
+        }
+      }
+
       const savedEntry = await createFoodLog(userId, {
         pantry_item_id: values.pantryItemId,
         custom_name: values.pantryItemId ? null : values.customName.trim(),
         servings: Number(values.servings),
-        calories: Number(values.calories),
-        protein: Number(values.protein),
+        calories: Math.round(Number(values.calories)),
+        protein: Math.round(Number(values.protein)),
         notes: values.notes.trim() || null,
       });
 
       if (!savedEntry) {
         throw new Error('Unable to log food.');
+      }
+
+      if (nextPantryItem) {
+        const updatedItem = await updatePantryStock(
+          nextPantryItem.id,
+          Math.max(0, roundInventoryAmount(nextPantryItem.stock_amount - amountUsed)),
+        );
+
+        setPantryItems((current) =>
+          current.map((item) => (item.id === updatedItem.id ? updatedItem : item)),
+        );
       }
 
       setTodayLogs((current) => [savedEntry, ...current]);
@@ -257,6 +379,7 @@ export const useGrazeData = () => {
     submitting,
     todayLogs,
     todaySummary: buildTodaySummary(profile, todayLogs),
+    clearPantryStock,
     togglePantryItem,
     emptyFoodLogForm,
     emptyPantryForm,

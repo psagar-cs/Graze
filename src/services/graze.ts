@@ -15,6 +15,36 @@ const requireData = <T>(data: T | null, error: Error | null) => {
   return data;
 };
 
+const pantryMetadataDefaults = {
+  category: 'other',
+  effort_level: 'assemble',
+  meal_role: 'main',
+  serving_amount: 1,
+  serving_unit: 'serving',
+  stock_amount: 0,
+} as const;
+
+const normalizePantryItem = (item: Partial<PantryItem> | null | undefined): PantryItem | null => {
+  if (!item) {
+    return null;
+  }
+
+  return {
+    ...item,
+    category: item.category ?? pantryMetadataDefaults.category,
+    effort_level: item.effort_level ?? pantryMetadataDefaults.effort_level,
+    meal_role: item.meal_role ?? pantryMetadataDefaults.meal_role,
+    serving_amount: item.serving_amount ?? pantryMetadataDefaults.serving_amount,
+    serving_unit: item.serving_unit ?? pantryMetadataDefaults.serving_unit,
+    stock_amount: item.stock_amount ?? pantryMetadataDefaults.stock_amount,
+  } as PantryItem;
+};
+
+const normalizeFoodLogEntry = (entry: FoodLogEntry): FoodLogEntry => ({
+  ...entry,
+  pantry_item: normalizePantryItem(entry.pantry_item),
+});
+
 export const ensureProfile = async (userId: string) => {
   const { data: existing, error: selectError } = await supabase
     .from('profiles')
@@ -68,7 +98,7 @@ export const getPantryItems = async (userId: string) => {
     .order('created_at', { ascending: false })
     .returns<PantryItem[]>();
 
-  return requireData(data, error) ?? [];
+  return (requireData(data, error) ?? []).map((item) => normalizePantryItem(item) as PantryItem);
 };
 
 export const createPantryItem = async (
@@ -76,9 +106,15 @@ export const createPantryItem = async (
   payload: {
     name: string;
     default_serving: string;
+    serving_amount: number;
+    serving_unit: string;
+    stock_amount: number;
     calories_per_serving: number;
     protein_per_serving: number;
     quantity_label: string;
+    category: string;
+    effort_level: string;
+    meal_role: string;
   },
 ) => {
   const { data, error } = await supabase
@@ -91,7 +127,7 @@ export const createPantryItem = async (
     .select('*')
     .single<PantryItem>();
 
-  return requireData(data, error);
+  return normalizePantryItem(requireData(data, error)) as PantryItem;
 };
 
 export const updatePantryItem = async (
@@ -99,9 +135,15 @@ export const updatePantryItem = async (
   payload: {
     name: string;
     default_serving: string;
+    serving_amount: number;
+    serving_unit: string;
+    stock_amount: number;
     calories_per_serving: number;
     protein_per_serving: number;
     quantity_label: string;
+    category: string;
+    effort_level: string;
+    meal_role: string;
   },
 ) => {
   const { data, error } = await supabase
@@ -111,7 +153,7 @@ export const updatePantryItem = async (
     .select('*')
     .single<PantryItem>();
 
-  return requireData(data, error);
+  return normalizePantryItem(requireData(data, error)) as PantryItem;
 };
 
 export const archivePantryItem = async (itemId: string, isActive: boolean) => {
@@ -122,7 +164,18 @@ export const archivePantryItem = async (itemId: string, isActive: boolean) => {
     .select('*')
     .single<PantryItem>();
 
-  return requireData(data, error);
+  return normalizePantryItem(requireData(data, error)) as PantryItem;
+};
+
+export const updatePantryStock = async (itemId: string, stockAmount: number) => {
+  const { data, error } = await supabase
+    .from('pantry_items')
+    .update({ stock_amount: stockAmount })
+    .eq('id', itemId)
+    .select('*')
+    .single<PantryItem>();
+
+  return normalizePantryItem(requireData(data, error)) as PantryItem;
 };
 
 export const getTodayLogs = async (userId: string) => {
@@ -136,7 +189,7 @@ export const getTodayLogs = async (userId: string) => {
     .order('logged_at', { ascending: false })
     .returns<FoodLogEntry[]>();
 
-  return requireData(data, error) ?? [];
+  return (requireData(data, error) ?? []).map(normalizeFoodLogEntry);
 };
 
 export const createFoodLog = async (
@@ -159,5 +212,5 @@ export const createFoodLog = async (
     .select('*, pantry_item:pantry_items(*)')
     .single<FoodLogEntry>();
 
-  return requireData(data, error);
+  return normalizeFoodLogEntry(requireData(data, error) as FoodLogEntry);
 };

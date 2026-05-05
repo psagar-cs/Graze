@@ -6,8 +6,25 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Field, LoadingBlock, ModalSheet, PrimaryButton, SectionCard } from '../components/ui';
 import { useGrazeData } from '../hooks/useGrazeData';
 import { formatTime } from '../lib/dates';
-import type { FoodLogFormValues, PantryFormValues, PantryItem } from '../types';
-import { getSuggestionPreviews } from '../utils/suggestions';
+import { formatCalories, formatProtein } from '../lib/format';
+import {
+  formatAmountWithUnit,
+  formatInventoryNumber,
+  formatUnitLabel,
+  getServingsInStock,
+  hasAnyStock,
+} from '../lib/inventory';
+import { getSuggestions } from '../services/suggestionEngine';
+import type {
+  FoodLogFormValues,
+  PantryCategory,
+  PantryEffortLevel,
+  PantryFormValues,
+  PantryItem,
+  PantryMealRole,
+  PantryStockEntryMode,
+  PantryUnit,
+} from '../types';
 
 type TabKey = 'today' | 'log' | 'pantry' | 'suggestions';
 
@@ -18,7 +35,59 @@ const tabs: { key: TabKey; label: string }[] = [
   { key: 'suggestions', label: 'Next' },
 ];
 
+const pantryCategoryOptions: { label: string; value: PantryCategory }[] = [
+  { label: 'Protein', value: 'protein' },
+  { label: 'Carb', value: 'carb' },
+  { label: 'Fat', value: 'fat' },
+  { label: 'Fruit', value: 'fruit' },
+  { label: 'Vegetable', value: 'vegetable' },
+  { label: 'Dairy', value: 'dairy' },
+  { label: 'Condiment', value: 'condiment' },
+  { label: 'Snack', value: 'snack' },
+  { label: 'Other', value: 'other' },
+];
+
+const effortOptions: { label: string; value: PantryEffortLevel }[] = [
+  { label: 'No prep', value: 'no_prep' },
+  { label: 'Assemble', value: 'assemble' },
+  { label: 'Microwave', value: 'microwave' },
+  { label: 'Cook', value: 'cook' },
+];
+
+const mealRoleOptions: { label: string; value: PantryMealRole }[] = [
+  { label: 'Main', value: 'main' },
+  { label: 'Base', value: 'base' },
+  { label: 'Topping', value: 'topping' },
+  { label: 'Condiment', value: 'condiment' },
+  { label: 'Snack', value: 'snack' },
+];
+
+const pantryUnitOptions: { label: string; value: PantryUnit }[] = [
+  { label: 'Serving', value: 'serving' },
+  { label: 'Cup', value: 'cup' },
+  { label: 'Tbsp', value: 'tbsp' },
+  { label: 'Tsp', value: 'tsp' },
+  { label: 'Piece', value: 'piece' },
+  { label: 'Can', value: 'can' },
+  { label: 'Gram', value: 'gram' },
+  { label: 'Ounce', value: 'ounce' },
+  { label: 'Lb', value: 'pound' },
+];
+
+const stockEntryOptions: { label: string; value: PantryStockEntryMode }[] = [
+  { label: 'Amount in stock', value: 'amount' },
+  { label: 'Servings in stock', value: 'servings' },
+];
+
 const validateNumber = (value: string) => Number.isFinite(Number(value)) && value.trim() !== '';
+
+const formatEffortLabel = (effortLevel: PantryEffortLevel) =>
+  ({
+    no_prep: 'No prep',
+    assemble: 'Assemble',
+    microwave: 'Microwave',
+    cook: 'Cook',
+  })[effortLevel];
 
 export function HomeScreen() {
   const { signOut } = useAuth();
@@ -29,6 +98,7 @@ export function HomeScreen() {
     pantryItems,
     profile,
     refresh,
+    clearPantryStock,
     saveFoodLog,
     savePantryItem,
     saveTargets,
@@ -48,9 +118,32 @@ export function HomeScreen() {
   const [editingItem, setEditingItem] = useState<PantryItem | null>(null);
   const [pantryForm, setPantryForm] = useState<PantryFormValues>(emptyPantryForm);
   const [logForm, setLogForm] = useState<FoodLogFormValues>(emptyFoodLogForm);
+  const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<string[]>([]);
+  const [suggestionSeed, setSuggestionSeed] = useState(0);
 
   const activePantry = pantryItems.filter((item) => item.is_active);
-  const suggestionPreviews = getSuggestionPreviews(activePantry, todaySummary);
+  const stockedPantry = activePantry.filter((item) => hasAnyStock(item));
+  const selectedPantryItem = pantryItems.find((item) => item.id === logForm.pantryItemId) ?? null;
+  const suggestionResult = getSuggestions({
+    pantryItems: activePantry,
+    todayLogs,
+    profile,
+    todaySummary,
+    now: new Date(),
+    goal: 'balanced',
+    excludedSuggestionIds: dismissedSuggestionIds,
+    variationSeed: suggestionSeed,
+  });
+
+  useEffect(() => {
+    setDismissedSuggestionIds([]);
+    setSuggestionSeed(0);
+  }, [
+    activePantry.map((item) => `${item.id}:${item.updated_at}`).join('|'),
+    todayLogs.map((entry) => `${entry.id}:${entry.updated_at}`).join('|'),
+    profile?.daily_calorie_target,
+    profile?.daily_protein_target,
+  ]);
 
   const syncTargets = () => {
     if (!profile) {
@@ -88,10 +181,17 @@ export function HomeScreen() {
     setEditingItem(item);
     setPantryForm({
       name: item.name,
-      defaultServing: item.default_serving,
+      servingAmount: String(item.serving_amount),
+      servingUnit: item.serving_unit,
+      stockEntryMode: 'amount',
+      stockAmount: String(item.stock_amount),
+      stockServings: String(getServingsInStock(item)),
       caloriesPerServing: String(item.calories_per_serving),
       proteinPerServing: String(item.protein_per_serving),
       quantityLabel: item.quantity_label,
+      category: item.category,
+      effortLevel: item.effort_level,
+      mealRole: item.meal_role,
     });
     setPantryModalOpen(true);
   };
@@ -99,9 +199,14 @@ export function HomeScreen() {
   const submitPantry = async () => {
     if (
       !pantryForm.name.trim() ||
-      !pantryForm.defaultServing.trim() ||
+      !validateNumber(pantryForm.servingAmount) ||
       !validateNumber(pantryForm.caloriesPerServing) ||
-      !validateNumber(pantryForm.proteinPerServing)
+      !validateNumber(pantryForm.proteinPerServing) ||
+      !(
+        pantryForm.stockEntryMode === 'amount'
+          ? validateNumber(pantryForm.stockAmount)
+          : validateNumber(pantryForm.stockServings)
+      )
     ) {
       return;
     }
@@ -117,11 +222,37 @@ export function HomeScreen() {
       pantryItemId: item.id,
       customName: item.name,
       servings: '1',
+      amountUsed: '',
       calories: String(item.calories_per_serving),
       protein: String(item.protein_per_serving),
       notes: '',
     });
     setLogModalOpen(true);
+  };
+
+  const suggestAgain = () => {
+    const currentIds = suggestionResult.suggestions.map((suggestion) => suggestion.id);
+    const nextExcludedIds = Array.from(new Set([...dismissedSuggestionIds, ...currentIds]));
+    const nextSeed = suggestionSeed + 1;
+    const nextResult = getSuggestions({
+      pantryItems: activePantry,
+      todayLogs,
+      profile,
+      todaySummary,
+      now: new Date(),
+      goal: 'balanced',
+      excludedSuggestionIds: nextExcludedIds,
+      variationSeed: nextSeed,
+    });
+
+    if (nextResult.suggestions.length) {
+      setDismissedSuggestionIds(nextExcludedIds);
+      setSuggestionSeed(nextSeed);
+      return;
+    }
+
+    setDismissedSuggestionIds([]);
+    setSuggestionSeed(nextSeed);
   };
 
   const submitLog = async () => {
@@ -228,9 +359,9 @@ export function HomeScreen() {
   const renderLog = () => (
     <View className="gap-4">
       <SectionCard subtitle="One-tap logging from the staples you already keep around." title="Quick add">
-        {activePantry.length ? (
+        {stockedPantry.length ? (
           <View className="gap-3">
-            {activePantry.map((item) => (
+            {stockedPantry.map((item) => (
               <View
                 className="flex-row items-center justify-between rounded-2xl border border-moss/10 bg-white px-4 py-3"
                 key={item.id}
@@ -238,7 +369,10 @@ export function HomeScreen() {
                 <View className="flex-1 pr-4">
                   <Text className="text-base font-semibold text-ink">{item.name}</Text>
                   <Text className="mt-1 text-sm text-ink/60">
-                    {item.default_serving} • {item.calories_per_serving} cal • {item.protein_per_serving}g protein
+                    {item.default_serving} • {formatCalories(item.calories_per_serving)} • {formatProtein(item.protein_per_serving)}
+                  </Text>
+                  <Text className="mt-1 text-sm text-moss">
+                    {formatAmountWithUnit(item.stock_amount, item.serving_unit)} in stock
                   </Text>
                 </View>
                 <PrimaryButton label="Log" onPress={() => startLogFromPantry(item)} />
@@ -247,10 +381,21 @@ export function HomeScreen() {
           </View>
         ) : (
           <EmptyState
-            actionLabel="Add pantry item"
-            description="Your quick-add list appears here once you set up a few staple ingredients."
-            onPress={openNewPantry}
-            title="Pantry is empty"
+            actionLabel={activePantry.length ? 'Open pantry' : 'Add pantry item'}
+            description={
+              activePantry.length
+                ? 'Your pantry has items, but none currently have stock available to log.'
+                : 'Your quick-add list appears here once you set up a few staple ingredients.'
+            }
+            onPress={() => {
+              if (activePantry.length) {
+                setActiveTab('pantry');
+                return;
+              }
+
+              openNewPantry();
+            }}
+            title={activePantry.length ? 'No stocked items' : 'Pantry is empty'}
           />
         )}
       </SectionCard>
@@ -282,14 +427,25 @@ export function HomeScreen() {
                   <View className="flex-1">
                     <Text className="text-base font-semibold text-ink">{item.name}</Text>
                     <Text className="mt-1 text-sm leading-5 text-ink/65">
-                      {item.default_serving} • {item.calories_per_serving} cal • {item.protein_per_serving}g protein
+                      {item.default_serving} • {formatCalories(item.calories_per_serving)} • {formatProtein(item.protein_per_serving)}
+                    </Text>
+                    <Text className="mt-1 text-sm text-moss">
+                      {formatAmountWithUnit(item.stock_amount, item.serving_unit)} in stock • {formatInventoryNumber(getServingsInStock(item))} servings available
                     </Text>
                     <Text className="mt-1 text-sm text-moss">
                       {item.quantity_label} • {item.is_active ? 'Active' : 'Archived'}
                     </Text>
+                    <Text className="mt-1 text-sm text-ink/55">
+                      {item.category} • {formatEffortLabel(item.effort_level)} • {item.meal_role}
+                    </Text>
                   </View>
-                  <View className="w-24 gap-2">
+                  <View className="w-28 gap-2">
                     <PrimaryButton label="Edit" onPress={() => openEditPantry(item)} variant="ghost" />
+                    <PrimaryButton
+                      label="Clear stock"
+                      onPress={() => clearPantryStock(item)}
+                      variant="outline"
+                    />
                     <PrimaryButton
                       label={item.is_active ? 'Archive' : 'Restore'}
                       onPress={() => togglePantryItem(item)}
@@ -315,7 +471,7 @@ export function HomeScreen() {
   const renderSuggestions = () => (
     <View className="gap-4">
       <SectionCard
-        subtitle="This is an honest preview: real calorie/protein context, lightweight canned suggestions, no AI layer yet."
+        subtitle="Deterministic, pantry-based suggestions that favor realistic low-effort combinations over macro-perfect weirdness."
         title="What can I eat next?"
       >
         <View className="rounded-2xl bg-pine px-4 py-4">
@@ -324,25 +480,94 @@ export function HomeScreen() {
             {todaySummary.remainingCalories} cal / {todaySummary.remainingProtein}g protein
           </Text>
         </View>
-        <Text className="text-sm leading-5 text-ink/65">
-          Suggestions lean on what’s in your pantry when possible, then fall back to preview cards so
-          the app stays useful while the recommendation engine is still being built.
-        </Text>
+        {suggestionResult.caveats.length ? (
+          <View className="gap-2 rounded-2xl bg-oat px-4 py-4">
+            {suggestionResult.caveats.map((caveat) => (
+              <Text className="text-sm leading-5 text-ink/65" key={caveat}>
+                {caveat}
+              </Text>
+            ))}
+          </View>
+        ) : (
+          <Text className="text-sm leading-5 text-ink/65">
+            Suggestions are built only from active pantry items and ranked for effort, coherence, and what you still have left today.
+          </Text>
+        )}
+        <PrimaryButton
+          label={suggestionResult.suggestions.length ? 'Suggest again' : 'Refresh suggestions'}
+          onPress={suggestAgain}
+          variant="secondary"
+        />
       </SectionCard>
 
-      {suggestionPreviews.map((suggestion) => (
-        <SectionCard key={suggestion.id} subtitle={suggestion.reason} title={suggestion.title}>
-          <View className="flex-row items-center justify-between">
-            <Text className="text-base text-ink/70">Effort: {suggestion.effortLabel}</Text>
-            <Text className="rounded-full bg-butter px-3 py-1 text-xs font-semibold uppercase text-ink">
-              Preview
-            </Text>
-          </View>
-          <Text className="text-sm text-ink/70">
-            Roughly {suggestion.estimatedCalories} calories and {suggestion.estimatedProtein}g protein.
-          </Text>
-        </SectionCard>
-      ))}
+      {suggestionResult.suggestions.length ? (
+        suggestionResult.suggestions.map((suggestion) => (
+          <SectionCard key={suggestion.id} subtitle={suggestion.description} title={suggestion.title}>
+            <View className="flex-row flex-wrap gap-2">
+              <InfoPill label={formatCalories(suggestion.estimatedCalories)} />
+              <InfoPill label={formatProtein(suggestion.estimatedProtein)} />
+              <InfoPill label={`${suggestion.estimatedPrepTimeMinutes} min`} />
+              <InfoPill label={formatEffortLabel(suggestion.effortLevel)} />
+            </View>
+            <View className="gap-2">
+              <Text className="text-sm font-semibold uppercase tracking-[1px] text-ink/55">Ingredients</Text>
+              <Text className="text-sm leading-5 text-ink/75">{suggestion.ingredients.join(' • ')}</Text>
+            </View>
+            <View className="rounded-2xl bg-oat px-4 py-4">
+              <Text className="text-sm font-semibold text-ink">Why this fits</Text>
+              <Text className="mt-2 text-sm leading-5 text-ink/70">{suggestion.reason}</Text>
+            </View>
+            {suggestion.caveats.length ? (
+              <View className="gap-2">
+                {suggestion.caveats.map((caveat) => (
+                  <Text className="text-sm leading-5 text-clay" key={caveat}>
+                    {caveat}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+            <View className="flex-row gap-3">
+              <View className="flex-1">
+                <PrimaryButton
+                  label="Not feeling it"
+                  onPress={() =>
+                    setDismissedSuggestionIds((current) => Array.from(new Set([...current, suggestion.id])))
+                  }
+                  variant="ghost"
+                />
+              </View>
+              <View className="flex-1">
+                <PrimaryButton label="Suggest again" onPress={suggestAgain} variant="secondary" />
+              </View>
+            </View>
+          </SectionCard>
+        ))
+      ) : suggestionResult.emptyState ? (
+        <EmptyState
+          actionLabel={
+            suggestionResult.emptyState.title === 'Targets needed first'
+              ? 'Open today'
+              : activePantry.length
+                ? 'Open pantry'
+                : 'Add pantry item'
+          }
+          description={suggestionResult.emptyState.description}
+          onPress={() => {
+            if (suggestionResult.emptyState?.title === 'Targets needed first') {
+              setActiveTab('today');
+              return;
+            }
+
+            if (activePantry.length) {
+              setActiveTab('pantry');
+              return;
+            }
+
+            openNewPantry();
+          }}
+          title={suggestionResult.emptyState.title}
+        />
+      ) : null}
     </View>
   );
 
@@ -419,12 +644,48 @@ export function HomeScreen() {
             placeholder="Greek yogurt"
             value={pantryForm.name}
           />
-          <Field
-            label="Default serving"
-            onChangeText={(text) => setPantryForm((current) => ({ ...current, defaultServing: text }))}
-            placeholder="1 cup"
-            value={pantryForm.defaultServing}
+          <View className="flex-row gap-3">
+            <View className="flex-1">
+              <Field
+                blurOnSubmit
+                keyboardType="numeric"
+                label="Serving amount"
+                onChangeText={(text) => setPantryForm((current) => ({ ...current, servingAmount: text }))}
+                placeholder="1.5"
+                returnKeyType="done"
+                value={pantryForm.servingAmount}
+              />
+            </View>
+            <View className="flex-1 gap-2">
+              <OptionGroup
+                label="Serving unit"
+                onChange={(servingUnit) => setPantryForm((current) => ({ ...current, servingUnit }))}
+                options={pantryUnitOptions}
+                value={pantryForm.servingUnit}
+              />
+            </View>
+          </View>
+          <OptionGroup
+            label="Stock entry"
+            onChange={(stockEntryMode) => setPantryForm((current) => ({ ...current, stockEntryMode }))}
+            options={stockEntryOptions}
+            value={pantryForm.stockEntryMode}
           />
+          <Field
+            keyboardType="numeric"
+            label={pantryForm.stockEntryMode === 'amount' ? `Amount in stock (${formatUnitLabel(pantryForm.servingUnit, 2)})` : 'Servings in stock'}
+            onChangeText={(text) =>
+              setPantryForm((current) => ({
+                ...current,
+                [current.stockEntryMode === 'amount' ? 'stockAmount' : 'stockServings']: text,
+              }))
+            }
+            placeholder={pantryForm.stockEntryMode === 'amount' ? '12' : '8'}
+            value={pantryForm.stockEntryMode === 'amount' ? pantryForm.stockAmount : pantryForm.stockServings}
+          />
+          <Text className="text-sm leading-5 text-ink/60">
+            Default serving: {formatAmountWithUnit(Number(pantryForm.servingAmount || '0'), pantryForm.servingUnit)}
+          </Text>
           <View className="flex-row gap-3">
             <View className="flex-1">
               <Field
@@ -455,6 +716,24 @@ export function HomeScreen() {
             placeholder="Usually keep 2 tubs"
             value={pantryForm.quantityLabel}
           />
+          <OptionGroup
+            label="Category"
+            onChange={(category) => setPantryForm((current) => ({ ...current, category }))}
+            options={pantryCategoryOptions}
+            value={pantryForm.category}
+          />
+          <OptionGroup
+            label="Effort"
+            onChange={(effortLevel) => setPantryForm((current) => ({ ...current, effortLevel }))}
+            options={effortOptions}
+            value={pantryForm.effortLevel}
+          />
+          <OptionGroup
+            label="Meal role"
+            onChange={(mealRole) => setPantryForm((current) => ({ ...current, mealRole }))}
+            options={mealRoleOptions}
+            value={pantryForm.mealRole}
+          />
           <PrimaryButton
             disabled={submitting}
             label={submitting ? 'Saving...' : editingItem ? 'Save changes' : 'Create item'}
@@ -483,6 +762,11 @@ export function HomeScreen() {
             <View className="rounded-2xl bg-white px-4 py-3">
               <Text className="text-sm font-medium text-ink/60">Pantry item</Text>
               <Text className="mt-1 text-base font-semibold text-ink">{logForm.customName}</Text>
+              {selectedPantryItem ? (
+                <Text className="mt-1 text-sm text-moss">
+                  {formatAmountWithUnit(selectedPantryItem.stock_amount, selectedPantryItem.serving_unit)} available
+                </Text>
+              ) : null}
             </View>
           )}
           <View className="flex-row gap-3">
@@ -518,6 +802,17 @@ export function HomeScreen() {
             returnKeyType="done"
             value={logForm.protein}
           />
+          {selectedPantryItem ? (
+            <Field
+              blurOnSubmit
+              keyboardType="numeric"
+              label={`Amount used (${formatUnitLabel(selectedPantryItem.serving_unit, 2)})`}
+              onChangeText={(text) => setLogForm((current) => ({ ...current, amountUsed: text }))}
+              placeholder={`Optional, defaults to ${formatInventoryNumber(Number(logForm.servings || '1') * selectedPantryItem.serving_amount)}`}
+              returnKeyType="done"
+              value={logForm.amountUsed}
+            />
+          ) : null}
           <Field
             label="Notes"
             multiline
@@ -571,6 +866,45 @@ function EmptyState({
       <Text className="text-base font-semibold text-ink">{title}</Text>
       <Text className="text-sm leading-5 text-ink/65">{description}</Text>
       <PrimaryButton label={actionLabel} onPress={onPress} variant="secondary" />
+    </View>
+  );
+}
+
+function InfoPill({ label }: { label: string }) {
+  return (
+    <Text className="rounded-full bg-butter px-3 py-1 text-xs font-semibold uppercase text-ink">
+      {label}
+    </Text>
+  );
+}
+
+function OptionGroup<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { label: string; value: T }[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <View className="gap-2">
+      <Text className="text-sm font-medium text-ink/70">{label}</Text>
+      <View className="flex-row flex-wrap gap-2">
+        {options.map((option) => (
+          <Pressable
+            className={`rounded-full border px-3 py-2 ${value === option.value ? 'border-pine bg-pine' : 'border-moss/20 bg-white'}`}
+            key={option.value}
+            onPress={() => onChange(option.value)}
+          >
+            <Text className={`text-sm font-medium ${value === option.value ? 'text-white' : 'text-ink/70'}`}>
+              {option.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
     </View>
   );
 }

@@ -6,14 +6,36 @@ export type Profile = {
   updated_at: string;
 };
 
+export type PantryCategory =
+  | 'protein'
+  | 'carb'
+  | 'fat'
+  | 'fruit'
+  | 'vegetable'
+  | 'dairy'
+  | 'condiment'
+  | 'snack'
+  | 'other';
+
+export type PantryEffortLevel = 'no_prep' | 'assemble' | 'microwave' | 'cook';
+export type PantryMealRole = 'main' | 'base' | 'topping' | 'condiment' | 'snack';
+export type PantryUnit = 'serving' | 'cup' | 'tbsp' | 'tsp' | 'piece' | 'can' | 'gram' | 'ounce' | 'pound';
+export type PantryStockEntryMode = 'amount' | 'servings';
+
 export type PantryItem = {
   id: string;
   user_id: string;
   name: string;
   default_serving: string;
+  serving_amount: number;
+  serving_unit: PantryUnit;
+  stock_amount: number;
   calories_per_serving: number;
   protein_per_serving: number;
   quantity_label: string;
+  category: PantryCategory;
+  effort_level: PantryEffortLevel;
+  meal_role: PantryMealRole;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -53,18 +75,50 @@ export type SuggestionPreview = {
   isPreview: boolean;
 };
 
+export type SuggestionGoal = 'balanced' | 'bulk';
+
+export type Suggestion = {
+  id: string;
+  title: string;
+  description: string;
+  ingredients: string[];
+  estimatedCalories: number;
+  estimatedProtein: number;
+  estimatedPrepTimeMinutes: number;
+  effortLevel: PantryEffortLevel;
+  reason: string;
+  caveats: string[];
+};
+
+export type SuggestionEngineResult = {
+  suggestions: Suggestion[];
+  caveats: string[];
+  emptyState?: {
+    title: string;
+    description: string;
+  };
+};
+
 export type PantryFormValues = {
   name: string;
-  defaultServing: string;
+  servingAmount: string;
+  servingUnit: PantryUnit;
+  stockEntryMode: PantryStockEntryMode;
+  stockAmount: string;
+  stockServings: string;
   caloriesPerServing: string;
   proteinPerServing: string;
   quantityLabel: string;
+  category: PantryCategory;
+  effortLevel: PantryEffortLevel;
+  mealRole: PantryMealRole;
 };
 
 export type FoodLogFormValues = {
   pantryItemId: string | null;
   customName: string;
   servings: string;
+  amountUsed: string;
   calories: string;
   protein: string;
   notes: string;
