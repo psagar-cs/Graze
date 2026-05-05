@@ -77,11 +77,21 @@ export type SuggestionPreview = {
 
 export type SuggestionGoal = 'balanced' | 'bulk';
 
+export type SuggestionIngredient = {
+  pantryItemId: string;
+  name: string;
+  servingAmount: number;
+  servingUnit: PantryUnit;
+  stockAmountRequired: number;
+  displayServing: string;
+};
+
 export type Suggestion = {
   id: string;
   title: string;
   description: string;
   ingredients: string[];
+  ingredientDetails: SuggestionIngredient[];
   estimatedCalories: number;
   estimatedProtein: number;
   estimatedPrepTimeMinutes: number;
@@ -97,6 +107,11 @@ export type SuggestionEngineResult = {
     title: string;
     description: string;
   };
+};
+
+export type SuggestionLogValues = {
+  suggestionId: string;
+  mealServings: string;
 };
 
 export type PantryFormValues = {

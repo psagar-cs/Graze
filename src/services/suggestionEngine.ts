@@ -10,6 +10,7 @@ import type {
   SuggestionGoal,
   TodaySummary,
 } from '../types';
+import { buildDefaultServingLabel } from '../lib/inventory';
 import { hasAtLeastOneServingInStock } from '../lib/inventory';
 
 type SuggestionContext = {
@@ -554,6 +555,14 @@ export const getSuggestions = ({
       title: candidate.title,
       description: candidate.description,
       ingredients: candidate.ingredients.map((item) => item.name),
+      ingredientDetails: candidate.ingredients.map((item) => ({
+        pantryItemId: item.id,
+        name: item.name,
+        servingAmount: item.serving_amount,
+        servingUnit: item.serving_unit,
+        stockAmountRequired: item.serving_amount,
+        displayServing: buildDefaultServingLabel(item.serving_amount, item.serving_unit),
+      })),
       estimatedCalories: candidate.estimatedCalories,
       estimatedProtein: candidate.estimatedProtein,
       estimatedPrepTimeMinutes: candidate.estimatedPrepTimeMinutes,

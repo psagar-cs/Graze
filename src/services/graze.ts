@@ -178,6 +178,22 @@ export const updatePantryStock = async (itemId: string, stockAmount: number) => 
   return normalizePantryItem(requireData(data, error)) as PantryItem;
 };
 
+export const updatePantryStocks = async (
+  updates: {
+    id: string;
+    stock_amount: number;
+  }[],
+) => {
+  const savedItems: PantryItem[] = [];
+
+  for (const update of updates) {
+    const savedItem = await updatePantryStock(update.id, update.stock_amount);
+    savedItems.push(savedItem);
+  }
+
+  return savedItems;
+};
+
 export const getTodayLogs = async (userId: string) => {
   const { startIso, endIso } = getTodayRange();
   const { data, error } = await supabase

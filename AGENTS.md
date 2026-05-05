@@ -88,3 +88,14 @@ Setup expectations:
 - Preserve the current deterministic, pantry-aware framing of the suggestions screen unless a bigger recommendation-engine redesign is explicitly requested.
 - Prefer small, targeted changes over broad refactors.
 - Keep docs and env-var names aligned with the current code whenever auth or Supabase wiring changes.
+
+## Future Ideas
+
+- Allow entries to be edited or deleted later, so accidental logs can be corrected from the day's history.
+- Allow logged meal entries to be edited later at the ingredient-portion level while still appearing as one grouped meal entry.
+- Support custom meals that map to multiple pantry ingredients and deduct each ingredient automatically when logged.
+- Add expiry date tracking, ideally optional, with future room for smart default estimates for common ingredients.
+- Improve suggestion normality rules, especially for "dry" base + protein meals that may need condiments or sauces.
+- Persist suggestion feedback such as dismissals or accepted suggestions across sessions.
+- Broaden fractional nutrition support beyond pantry items so food logs can store more precise calories/protein when needed.
+- Consider batch-aware inventory later if users need separate purchase lots, refill tracking, or per-batch expiry dates.

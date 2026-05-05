@@ -11,10 +11,19 @@ import {
   getPantryItems,
   getTodayLogs,
   updatePantryStock,
+  updatePantryStocks,
   updatePantryItem,
   updateProfileTargets,
 } from '../services/graze';
-import type { FoodLogEntry, FoodLogFormValues, PantryFormValues, PantryItem, Profile, TodaySummary } from '../types';
+import type {
+  FoodLogEntry,
+  FoodLogFormValues,
+  PantryFormValues,
+  PantryItem,
+  Profile,
+  Suggestion,
+  TodaySummary,
+} from '../types';
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
 type LoadStep = 'profile' | 'pantry' | 'todayLogs';
@@ -367,6 +376,68 @@ export const useGrazeData = () => {
     }
   };
 
+  const saveSuggestedMealLog = async (suggestion: Suggestion, mealServings: string) => {
+    if (!userId) {
+      return;
+    }
+
+    const scaledMealServings = Number(mealServings);
+
+    if (!Number.isFinite(scaledMealServings) || scaledMealServings <= 0) {
+      throw new Error('Enter a valid number of meal servings.');
+    }
+
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const pantryUpdates = suggestion.ingredientDetails.map((ingredient) => {
+        const pantryItem = pantryItems.find((item) => item.id === ingredient.pantryItemId);
+
+        if (!pantryItem) {
+          throw new Error(`Could not find ${ingredient.name} in the pantry.`);
+        }
+
+        const stockAmountRequired = roundInventoryAmount(ingredient.stockAmountRequired * scaledMealServings);
+
+        if (stockAmountRequired - pantryItem.stock_amount > 0.0001) {
+          throw new Error(`Not enough ${ingredient.name} in stock for that meal.`);
+        }
+
+        return {
+          id: pantryItem.id,
+          stock_amount: Math.max(0, roundInventoryAmount(pantryItem.stock_amount - stockAmountRequired)),
+        };
+      });
+
+      const savedEntry = await createFoodLog(userId, {
+        pantry_item_id: null,
+        custom_name: suggestion.title,
+        servings: scaledMealServings,
+        calories: Math.round(suggestion.estimatedCalories * scaledMealServings),
+        protein: Math.round(suggestion.estimatedProtein * scaledMealServings),
+        notes: null,
+      });
+
+      if (!savedEntry) {
+        throw new Error('Unable to log meal.');
+      }
+
+      const updatedItems = await updatePantryStocks(pantryUpdates);
+
+      setPantryItems((current) =>
+        current.map((item) => updatedItems.find((updatedItem) => updatedItem.id === item.id) ?? item),
+      );
+      setTodayLogs((current) => [savedEntry, ...current]);
+    } catch (saveError) {
+      const message = saveError instanceof Error ? saveError.message : 'Unable to log meal.';
+      setError(message);
+      throw saveError;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return {
     error,
     loading,
@@ -374,6 +445,7 @@ export const useGrazeData = () => {
     profile,
     refresh,
     saveFoodLog,
+    saveSuggestedMealLog,
     savePantryItem,
     saveTargets,
     submitting,

@@ -24,6 +24,8 @@ import type {
   PantryMealRole,
   PantryStockEntryMode,
   PantryUnit,
+  Suggestion,
+  SuggestionLogValues,
 } from '../types';
 
 type TabKey = 'today' | 'log' | 'pantry' | 'suggestions';
@@ -101,6 +103,7 @@ export function HomeScreen() {
     clearPantryStock,
     saveFoodLog,
     savePantryItem,
+    saveSuggestedMealLog,
     saveTargets,
     submitting,
     todayLogs,
@@ -118,6 +121,12 @@ export function HomeScreen() {
   const [editingItem, setEditingItem] = useState<PantryItem | null>(null);
   const [pantryForm, setPantryForm] = useState<PantryFormValues>(emptyPantryForm);
   const [logForm, setLogForm] = useState<FoodLogFormValues>(emptyFoodLogForm);
+  const [suggestionLogOpen, setSuggestionLogOpen] = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<Suggestion | null>(null);
+  const [suggestionLogForm, setSuggestionLogForm] = useState<SuggestionLogValues>({
+    suggestionId: '',
+    mealServings: '1',
+  });
   const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<string[]>([]);
   const [suggestionSeed, setSuggestionSeed] = useState(0);
 
@@ -265,6 +274,29 @@ export function HomeScreen() {
     await saveFoodLog(logForm);
     setLogModalOpen(false);
     setLogForm(emptyFoodLogForm());
+  };
+
+  const openSuggestionLog = (suggestion: Suggestion) => {
+    setSelectedSuggestion(suggestion);
+    setSuggestionLogForm({
+      suggestionId: suggestion.id,
+      mealServings: '1',
+    });
+    setSuggestionLogOpen(true);
+  };
+
+  const submitSuggestionLog = async () => {
+    if (!selectedSuggestion || !validateNumber(suggestionLogForm.mealServings)) {
+      return;
+    }
+
+    await saveSuggestedMealLog(selectedSuggestion, suggestionLogForm.mealServings);
+    setSuggestionLogOpen(false);
+    setSelectedSuggestion(null);
+    setSuggestionLogForm({
+      suggestionId: '',
+      mealServings: '1',
+    });
   };
 
   const renderToday = () => (
@@ -526,6 +558,14 @@ export function HomeScreen() {
                 ))}
               </View>
             ) : null}
+            <View className="flex-row gap-3">
+              <View className="flex-1">
+                <PrimaryButton
+                  label="Log this meal"
+                  onPress={() => openSuggestionLog(suggestion)}
+                />
+              </View>
+            </View>
             <View className="flex-row gap-3">
               <View className="flex-1">
                 <PrimaryButton
@@ -822,6 +862,63 @@ export function HomeScreen() {
           />
           <PrimaryButton disabled={submitting} label={submitting ? 'Saving...' : 'Save log'} onPress={submitLog} />
         </View>
+      </ModalSheet>
+
+      <ModalSheet
+        onClose={() => {
+          setSuggestionLogOpen(false);
+          setSelectedSuggestion(null);
+          setSuggestionLogForm({
+            suggestionId: '',
+            mealServings: '1',
+          });
+        }}
+        open={suggestionLogOpen}
+        title="Log suggested meal"
+      >
+        {selectedSuggestion ? (
+          <View className="gap-4">
+            <View className="rounded-2xl bg-white px-4 py-4">
+              <Text className="text-sm font-medium text-ink/60">Meal</Text>
+              <Text className="mt-1 text-base font-semibold text-ink">{selectedSuggestion.title}</Text>
+              <Text className="mt-2 text-sm leading-5 text-ink/65">{selectedSuggestion.description}</Text>
+            </View>
+            <View className="flex-row flex-wrap gap-2">
+              <InfoPill label={formatCalories(selectedSuggestion.estimatedCalories * Number(suggestionLogForm.mealServings || '1'))} />
+              <InfoPill label={formatProtein(selectedSuggestion.estimatedProtein * Number(suggestionLogForm.mealServings || '1'))} />
+            </View>
+            <Field
+              blurOnSubmit
+              keyboardType="numeric"
+              label="Meal servings"
+              onChangeText={(text) => setSuggestionLogForm((current) => ({ ...current, mealServings: text }))}
+              placeholder="1"
+              returnKeyType="done"
+              value={suggestionLogForm.mealServings}
+            />
+            <View className="gap-2">
+              <Text className="text-sm font-semibold uppercase tracking-[1px] text-ink/55">Ingredient deduction</Text>
+              {selectedSuggestion.ingredientDetails.map((ingredient) => {
+                const scaledMealServings = Number(suggestionLogForm.mealServings || '1');
+                const scaledAmount = ingredient.stockAmountRequired * (Number.isFinite(scaledMealServings) ? scaledMealServings : 1);
+
+                return (
+                  <View className="rounded-2xl bg-white px-4 py-3" key={ingredient.pantryItemId}>
+                    <Text className="text-base font-semibold text-ink">{ingredient.name}</Text>
+                    <Text className="mt-1 text-sm text-ink/65">
+                      Uses {formatAmountWithUnit(scaledAmount, ingredient.servingUnit)}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+            <PrimaryButton
+              disabled={submitting || !validateNumber(suggestionLogForm.mealServings)}
+              label={submitting ? 'Logging...' : 'Log meal'}
+              onPress={submitSuggestionLog}
+            />
+          </View>
+        ) : null}
       </ModalSheet>
     </SafeAreaView>
   );
