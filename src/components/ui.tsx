@@ -115,6 +115,26 @@ export function SectionCard({
   );
 }
 
+export function SheetStack({
+  children,
+  className = '',
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <Pressable className={`gap-4 ${className}`.trim()} collapsable={false}>{children}</Pressable>;
+}
+
+export function SheetSurface({
+  children,
+  className = '',
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <Pressable className={className} collapsable={false}>{children}</Pressable>;
+}
+
 export function ModalSheet({
   title,
   open,
@@ -128,26 +148,30 @@ export function ModalSheet({
 }) {
   return (
     <Modal animationType="slide" transparent visible={open}>
-      <Pressable className="flex-1 justify-end bg-ink/35" onPress={Keyboard.dismiss}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          className="justify-end"
-        >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        className="flex-1 justify-end"
+      >
+        <View className="flex-1 justify-end bg-ink/35">
+          <Pressable className="flex-1" onPress={Keyboard.dismiss} />
           <SafeAreaView className="max-h-[85%] rounded-t-[32px] bg-oat px-5 pb-6 pt-4">
-            <Pressable>
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: 24 }}
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
               <View className="mb-4 flex-row items-center justify-between">
                 <Text className="font-display text-2xl text-pine">{title}</Text>
                 <Pressable onPress={onClose}>
                   <Text className="text-base font-semibold text-clay">Close</Text>
                 </Pressable>
               </View>
-              <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                {children}
-              </ScrollView>
-            </Pressable>
+              {children}
+            </ScrollView>
           </SafeAreaView>
-        </KeyboardAvoidingView>
-      </Pressable>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

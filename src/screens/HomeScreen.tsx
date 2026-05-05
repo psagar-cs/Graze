@@ -3,7 +3,15 @@ import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Field, LoadingBlock, ModalSheet, PrimaryButton, SectionCard } from '../components/ui';
+import {
+  Field,
+  LoadingBlock,
+  ModalSheet,
+  PrimaryButton,
+  SectionCard,
+  SheetStack,
+  SheetSurface,
+} from '../components/ui';
 import { useGrazeData } from '../hooks/useGrazeData';
 import { formatTime } from '../lib/dates';
 import { formatCalories, formatProtein } from '../lib/format';
@@ -677,7 +685,7 @@ export function HomeScreen() {
         open={pantryModalOpen}
         title={editingItem ? 'Edit pantry item' : 'Add pantry item'}
       >
-        <View className="gap-4">
+        <SheetStack>
           <Field
             label="Name"
             onChangeText={(text) => setPantryForm((current) => ({ ...current, name: text }))}
@@ -779,7 +787,7 @@ export function HomeScreen() {
             label={submitting ? 'Saving...' : editingItem ? 'Save changes' : 'Create item'}
             onPress={submitPantry}
           />
-        </View>
+        </SheetStack>
       </ModalSheet>
 
       <ModalSheet
@@ -790,7 +798,7 @@ export function HomeScreen() {
         open={logModalOpen}
         title="Log food"
       >
-        <View className="gap-4">
+        <SheetStack>
           {!logForm.pantryItemId ? (
             <Field
               label="Food name"
@@ -799,7 +807,7 @@ export function HomeScreen() {
               value={logForm.customName}
             />
           ) : (
-            <View className="rounded-2xl bg-white px-4 py-3">
+            <SheetSurface className="rounded-2xl bg-white px-4 py-3">
               <Text className="text-sm font-medium text-ink/60">Pantry item</Text>
               <Text className="mt-1 text-base font-semibold text-ink">{logForm.customName}</Text>
               {selectedPantryItem ? (
@@ -807,7 +815,7 @@ export function HomeScreen() {
                   {formatAmountWithUnit(selectedPantryItem.stock_amount, selectedPantryItem.serving_unit)} available
                 </Text>
               ) : null}
-            </View>
+            </SheetSurface>
           )}
           <View className="flex-row gap-3">
             <View className="flex-1">
@@ -861,7 +869,7 @@ export function HomeScreen() {
             value={logForm.notes}
           />
           <PrimaryButton disabled={submitting} label={submitting ? 'Saving...' : 'Save log'} onPress={submitLog} />
-        </View>
+        </SheetStack>
       </ModalSheet>
 
       <ModalSheet
@@ -877,12 +885,12 @@ export function HomeScreen() {
         title="Log suggested meal"
       >
         {selectedSuggestion ? (
-          <View className="gap-4">
-            <View className="rounded-2xl bg-white px-4 py-4">
+          <SheetStack>
+            <SheetSurface className="rounded-2xl bg-white px-4 py-4">
               <Text className="text-sm font-medium text-ink/60">Meal</Text>
               <Text className="mt-1 text-base font-semibold text-ink">{selectedSuggestion.title}</Text>
               <Text className="mt-2 text-sm leading-5 text-ink/65">{selectedSuggestion.description}</Text>
-            </View>
+            </SheetSurface>
             <View className="flex-row flex-wrap gap-2">
               <InfoPill label={formatCalories(selectedSuggestion.estimatedCalories * Number(suggestionLogForm.mealServings || '1'))} />
               <InfoPill label={formatProtein(selectedSuggestion.estimatedProtein * Number(suggestionLogForm.mealServings || '1'))} />
@@ -896,28 +904,28 @@ export function HomeScreen() {
               returnKeyType="done"
               value={suggestionLogForm.mealServings}
             />
-            <View className="gap-2">
+            <SheetStack className="gap-2">
               <Text className="text-sm font-semibold uppercase tracking-[1px] text-ink/55">Ingredient deduction</Text>
               {selectedSuggestion.ingredientDetails.map((ingredient) => {
                 const scaledMealServings = Number(suggestionLogForm.mealServings || '1');
                 const scaledAmount = ingredient.stockAmountRequired * (Number.isFinite(scaledMealServings) ? scaledMealServings : 1);
 
                 return (
-                  <View className="rounded-2xl bg-white px-4 py-3" key={ingredient.pantryItemId}>
+                  <SheetSurface className="rounded-2xl bg-white px-4 py-3" key={ingredient.pantryItemId}>
                     <Text className="text-base font-semibold text-ink">{ingredient.name}</Text>
                     <Text className="mt-1 text-sm text-ink/65">
                       Uses {formatAmountWithUnit(scaledAmount, ingredient.servingUnit)}
                     </Text>
-                  </View>
+                  </SheetSurface>
                 );
               })}
-            </View>
+            </SheetStack>
             <PrimaryButton
               disabled={submitting || !validateNumber(suggestionLogForm.mealServings)}
               label={submitting ? 'Logging...' : 'Log meal'}
               onPress={submitSuggestionLog}
             />
-          </View>
+          </SheetStack>
         ) : null}
       </ModalSheet>
     </SafeAreaView>
