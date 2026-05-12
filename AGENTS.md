@@ -4,15 +4,17 @@
 
 Graze is an Expo/React Native mobile app for pantry-aware food logging and lightweight next-meal suggestions.
 
-Current v1 scope:
+Current scope:
 - Clerk authentication
 - Daily calorie/protein targets
 - Pantry item CRUD
-- Food logging
-- Deterministic pantry-aware next-meal suggestions
+- Pantry metadata for suggestions
 - Pantry inventory tracking with serving/unit stock math
+- Direct food logging
+- Suggested meal logging with pantry deduction
+- Deterministic pantry-aware next-meal suggestions
 
-Important: the suggestions feature is intentionally a preview/stub. It is not a real AI recommendation engine yet.
+Important: the suggestions system is intentionally deterministic by design. It is not a real AI recommendation engine.
 
 ## Tech Stack
 
@@ -26,10 +28,10 @@ Important: the suggestions feature is intentionally a preview/stub. It is not a 
 
 - `src/screens/AuthScreen.tsx`: custom auth UI, including email/password and Google sign-in
 - `src/screens/HomeScreen.tsx`: signed-in app shell and the `Today`, `Log`, `Pantry`, and `Next` tabs
-- `src/hooks/useGrazeData.ts`: shared signed-in data loading, refresh logic, and top-level error banner state
+- `src/hooks/useGrazeData.ts`: shared signed-in data loading, stabilized bootstrap/refresh behavior, and top-level readable error banner state
 - `src/services/graze.ts`: Supabase reads/writes for profiles, pantry items, and food logs
-- `src/services/suggestionEngine.ts`: deterministic pantry-aware candidate generation, filtering, and ranking
-- `src/lib/inventory.ts`: pantry serving/unit inventory math and formatting helpers
+- `src/services/suggestionEngine.ts`: deterministic pantry-aware candidate generation, filtering, ranking, and suggested-meal support
+- `src/lib/inventory.ts`: pantry serving/unit inventory math, stock handling, and formatting helpers
 - `src/lib/supabase.ts`: Supabase client wiring
 - `supabase/migrations/20260425_init_graze.sql`: base schema, triggers, RLS, and policies
 - `supabase/migrations/20260504_add_pantry_metadata.sql`: pantry suggestion metadata fields
@@ -45,6 +47,8 @@ Important: the suggestions feature is intentionally a preview/stub. It is not a 
 - The app uses a custom auth screen, not Clerk's hosted/prebuilt native sign-in UI.
 
 ## Environment And Setup
+
+- Copy `.env.example` to `.env` before local development.
 
 Required env vars:
 - `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`
@@ -69,10 +73,12 @@ Setup expectations:
 - All Supabase migrations in `supabase/migrations/` must be run before signed-in pantry, logging, suggestions, and inventory flows are expected to work.
 - Clerk must be connected to Supabase using the modern third-party auth flow.
 - Google must be enabled in Clerk if the Google sign-in button is expected to work.
+- GitHub Actions now runs baseline security checks for typecheck, secret scanning, and dependency review.
 
 ## Verification Expectations
 
 - Run `npm run typecheck` after code changes.
+- Ensure CI still covers typecheck, secret scanning, and dependency review after repo/security changes.
 - Test key flows in Expo Go.
 - For auth or data-layer changes, verify:
   - sign in works
@@ -88,7 +94,8 @@ Setup expectations:
 
 - Expo package versions must match Expo SDK 54 bundled native module versions.
 - NativeWind requires Tailwind CSS v3 and the `nativewind/preset` in `tailwind.config.js`.
-- Partial signed-in data load failures surface through the shared error banner in `useGrazeData.ts`.
+- Signed-in bootstrap is deliberately stabilized to avoid repeated loading loops when auth or backend setup is temporarily unavailable.
+- Partial signed-in data load failures surface through the shared readable error banner in `useGrazeData.ts`.
 - If a banner says a load step failed, inspect the Expo/Metro logs for the step-specific console error before changing UI behavior.
 - Pantry nutrition per serving supports decimals, but logged calories/protein are still integer-backed in the current schema.
 - Legacy pantry rows default to zero stock until inventory is explicitly set, so they will not participate in stock-aware suggestions until updated.
