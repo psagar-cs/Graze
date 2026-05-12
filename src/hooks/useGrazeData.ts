@@ -1,5 +1,5 @@
 import { useAuth } from '@clerk/clerk-expo';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { buildDefaultServingLabel, roundInventoryAmount } from '../lib/inventory';
 import { configureSupabaseAccessToken } from '../lib/supabase';
@@ -86,9 +86,17 @@ const formatPantrySaveError = (saveError: unknown) => {
 
 const formatLoadError = (step: LoadStep, loadError: unknown) => {
   const fallback = `Could not load ${stepLabels[step]}.`;
+  const { message, details, hint, code } = getErrorParts(loadError);
 
-  if (loadError instanceof Error && loadError.message) {
-    return `${fallback} ${loadError.message}`;
+  const detailParts = [
+    message,
+    details,
+    hint ? `Hint: ${hint}` : '',
+    code ? `Code: ${code}` : '',
+  ].filter(Boolean);
+
+  if (detailParts.length > 0) {
+    return `${fallback} ${detailParts.join(' ')}`;
   }
 
   return fallback;
@@ -139,27 +147,69 @@ const emptyFoodLogForm = (): FoodLogFormValues => ({
 });
 
 export const useGrazeData = () => {
-  const { getToken, userId } = useAuth();
+  const { getToken, isLoaded, isSignedIn, userId } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [pantryItems, setPantryItems] = useState<PantryItem[]>([]);
   const [todayLogs, setTodayLogs] = useState<FoodLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const getTokenRef = useRef(getToken);
+  const lastBootstrapKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    configureSupabaseAccessToken(() => getToken());
+    getTokenRef.current = getToken;
   }, [getToken]);
 
-  const refresh = async () => {
-    if (!userId) {
+  const authStateKey = !isLoaded ? 'pending' : isSignedIn && userId ? `signed-in:${userId}` : 'signed-out';
+
+  useEffect(() => {
+    configureSupabaseAccessToken(async () => {
+      if (!isLoaded || !isSignedIn) {
+        return null;
+      }
+
+      return getTokenRef.current();
+    });
+  }, [isLoaded, isSignedIn]);
+
+  const refresh = async (mode: 'bootstrap' | 'manual' = 'manual') => {
+    if (!isLoaded) {
       return;
     }
 
-    setLoading(true);
+    if (!isSignedIn || !userId) {
+      lastBootstrapKeyRef.current = authStateKey;
+      setProfile(null);
+      setPantryItems([]);
+      setTodayLogs([]);
+      setError(null);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    if (mode === 'bootstrap' && lastBootstrapKeyRef.current === authStateKey) {
+      return;
+    }
+
+    if (mode === 'bootstrap') {
+      lastBootstrapKeyRef.current = authStateKey;
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
+
     setError(null);
 
     try {
+      const token = await getTokenRef.current();
+
+      if (!token) {
+        throw new Error('Authentication session is not ready yet.');
+      }
+
       const ensuredProfile = await ensureProfile(userId);
       setProfile(ensuredProfile);
 
@@ -187,13 +237,17 @@ export const useGrazeData = () => {
       setTodayLogs([]);
       setError(formatLoadError('profile', refreshError));
     } finally {
-      setLoading(false);
+      if (mode === 'bootstrap') {
+        setLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
   };
 
   useEffect(() => {
-    void refresh();
-  }, [userId]);
+    void refresh('bootstrap');
+  }, [authStateKey, isLoaded, isSignedIn, userId]);
 
   const saveTargets = async (dailyCalorieTarget: string, dailyProteinTarget: string) => {
     if (!userId) {
@@ -444,6 +498,7 @@ export const useGrazeData = () => {
     pantryItems,
     profile,
     refresh,
+    refreshing,
     saveFoodLog,
     saveSuggestedMealLog,
     savePantryItem,

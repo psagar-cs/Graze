@@ -108,6 +108,7 @@ export function HomeScreen() {
     pantryItems,
     profile,
     refresh,
+    refreshing,
     clearPantryStock,
     saveFoodLog,
     savePantryItem,
@@ -673,7 +674,12 @@ export function HomeScreen() {
 
           {renderActiveTab()}
 
-          <PrimaryButton label="Refresh from Supabase" onPress={() => refresh()} variant="ghost" />
+          <PrimaryButton
+            disabled={refreshing}
+            label={refreshing ? 'Refreshing...' : 'Refresh from Supabase'}
+            onPress={() => refresh()}
+            variant="ghost"
+          />
         </ScrollView>
       </View>
 
