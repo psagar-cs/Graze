@@ -51,6 +51,20 @@ Required env vars:
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 
+## Sensitive Files
+
+- Do not read, summarize, copy, or modify sensitive files unless the user explicitly asks and understands the risk.
+- Treat the following as off-limits by default:
+  - `.env`
+  - `.env.*`
+  - `secrets/`
+  - `*.pem`
+  - `*.p8`
+  - `*.p12`
+  - `*.key`
+  - `*.mobileprovision`
+  - `*.jks`
+
 Setup expectations:
 - All Supabase migrations in `supabase/migrations/` must be run before signed-in pantry, logging, suggestions, and inventory flows are expected to work.
 - Clerk must be connected to Supabase using the modern third-party auth flow.
