@@ -110,13 +110,64 @@ Setup expectations:
 - Prefer small, targeted changes over broad refactors.
 - Keep docs and env-var names aligned with the current code whenever auth or Supabase wiring changes.
 
-## Future Ideas
+## Product Roadmap
 
-- Allow entries to be edited or deleted later, so accidental logs can be corrected from the day's history.
-- Allow logged meal entries to be edited later at the ingredient-portion level while still appearing as one grouped meal entry.
-- Support custom meals that map to multiple pantry ingredients and deduct each ingredient automatically when logged.
+Roadmap order:
+1. Food log correction
+2. Reusable custom meals
+3. Grouped meal editing
+4. Expiry tracking
+5. Suggestion refinement
+6. UI and look-and-feel polish
+7. Out-of-pantry UX polish if still needed
+
+Why this order:
+- The current app stores food logs as mostly flat rows.
+- Suggested/grouped meals still save as one visible food log plus pantry stock deductions behind the scenes.
+- A reusable meal-composition layer should land before ingredient-level grouped-meal editing to avoid rework.
+- Expiry tracking should land before the next ranking pass so suggestion logic can use expiry signals directly.
+- Core logging, meal composition, and inventory behavior should stabilize before a broader UI polish pass.
+- Expiry-aware suggestion logic will likely reshape the `Next` tab, so polishing that experience too early risks rework.
+
+### Near-Term Product Foundation
+
+- Allow logged entries to be edited or deleted later, so accidental logs can be corrected from the day's history.
+- Support saved custom meals that map to multiple pantry ingredients and deduct each ingredient automatically when logged.
+- Allow grouped meal entries to be edited later at the ingredient-portion level while still appearing as one grouped meal entry.
+
+Implementation guidance:
+- Phase 1 should add edit/delete for simple log rows first and handle pantry stock restoration/re-application safely.
+- Phase 2 should introduce reusable meal templates plus a canonical meal-composition layer instead of adding more special-case grouped-log behavior.
+- Phase 3 should reuse that same composition model for grouped suggested meals so they can be reopened, adjusted, or deleted without inventing a second editing path.
+
+### Inventory Intelligence
+
 - Add expiry date tracking, ideally optional, with future room for smart default estimates for common ingredients.
-- Improve suggestion normality rules, especially for "dry" base + protein meals that may need condiments or sauces.
-- Persist suggestion feedback such as dismissals or accepted suggestions across sessions.
 - Broaden fractional nutrition support beyond pantry items so food logs can store more precise calories/protein when needed.
 - Consider batch-aware inventory later if users need separate purchase lots, refill tracking, or per-batch expiry dates.
+
+Implementation guidance:
+- Start expiry tracking as item-level optional metadata.
+- Defer batch-aware inventory until later; it should not be bundled into the first expiry pass.
+
+### Suggestion Quality And UX
+
+- Improve suggestion normality/sensibility rules, especially for "dry" base + protein meals that may need condiments or sauces.
+- Factor in soon-to-expire ingredients, effort level, and meal coherence more strongly during ranking.
+- Persist suggestion feedback such as dismissals or accepted suggestions across sessions.
+- Revisit out-of-pantry UX as a clearer front-end flow only if the current manual custom-log path still feels too hidden.
+
+Implementation guidance:
+- Keep manual custom logs as the underlying out-of-pantry model for now rather than introducing a separate meal type.
+- Prefer ranking/filtering improvements over any LLM-style meal generation redesign.
+
+### UI And Product Feel
+
+- Improve the overall UI, interaction quality, and visual cohesion of the app once the next recommendation pass is more stable.
+- Revisit spacing, hierarchy, component consistency, tab and screen clarity, and empty/loading/error states.
+- Polish the app's look and feel without changing the deterministic pantry-aware product framing.
+
+Implementation guidance:
+- Save the broad polish pass for after expiry tracking and suggestion refinement, since those phases are likely to reshape the `Next` experience.
+- Continue making targeted usability fixes earlier whenever a flow is confusing or high-friction.
+- Treat this as a focused product-quality pass, not a brand-new information architecture unless later product changes require one.
