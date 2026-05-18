@@ -934,6 +934,59 @@ export function HomeScreen() {
         )}
       </SectionCard>
 
+      <SectionCard subtitle="Reusable pantry-based meals that log as one grouped entry." title="Saved meals">
+        <View className="mb-1">
+          <PrimaryButton label="Create custom meal" onPress={openNewCustomMeal} />
+        </View>
+        {customMeals.length ? (
+          <View className="gap-3">
+            {customMeals.map((meal) => {
+              const summary = summarizeCustomMeal(meal);
+
+              return (
+                <View className="rounded-2xl border border-moss/10 bg-oat px-4 py-4" key={meal.id}>
+                  <View className="flex-row items-start justify-between gap-4">
+                    <View className="flex-1">
+                      <Text className="text-base font-semibold text-ink">{meal.name}</Text>
+                      <Text className="mt-1 text-sm text-ink/60">
+                        {summary.ingredientCount} ingredient(s) • {formatCalories(summary.calories)} • {formatProtein(summary.protein)}
+                      </Text>
+                      {summary.hasProblem ? (
+                        <Text className="mt-2 text-sm text-clay">
+                          {summary.hasArchivedIngredients
+                            ? 'This meal includes archived pantry items. Edit it before logging again.'
+                            : 'Some ingredients are missing. Edit this meal before logging again.'}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View className="w-28 gap-2">
+                      <PrimaryButton
+                        disabled={summary.hasProblem}
+                        label="Log"
+                        onPress={() => openCustomMealLog(meal)}
+                      />
+                      <PrimaryButton label="Edit" onPress={() => openEditCustomMeal(meal)} variant="ghost" />
+                      <PrimaryButton
+                        label={pendingDeleteMealId === meal.id ? 'Confirm' : 'Delete'}
+                        onPress={() => deleteCurrentCustomMeal(meal)}
+                        variant="danger"
+                      />
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <EmptyState
+            actionLabel="Build first meal"
+            description="Save a meal made of pantry ingredients so you can log the whole combo in one step later."
+            onPress={openNewCustomMeal}
+            title="No saved meals yet"
+          />
+        )}
+      </SectionCard>
+
       <SectionCard subtitle="Fallback for anything not already in the pantry." title="Manual entry">
         <PrimaryButton
           label="Add custom log"
