@@ -24,7 +24,12 @@ import {
 } from '../lib/inventory';
 import { getSuggestions } from '../services/suggestionEngine';
 import type {
+  CustomMeal,
+  FoodLogMealItem,
+  FoodLogEntry,
   FoodLogFormValues,
+  GroupedFoodLogFormValues,
+  GroupedFoodLogIngredientFormValue,
   PantryCategory,
   PantryEffortLevel,
   PantryFormValues,
@@ -91,6 +96,27 @@ const stockEntryOptions: { label: string; value: PantryStockEntryMode }[] = [
 
 const validateNumber = (value: string) => Number.isFinite(Number(value)) && value.trim() !== '';
 
+type CustomMealIngredientForm = {
+  pantryItemId: string | null;
+  amountUsed: string;
+};
+
+type CustomMealFormValues = {
+  name: string;
+  ingredients: CustomMealIngredientForm[];
+};
+
+const emptyCustomMealForm = (): CustomMealFormValues => ({
+  name: '',
+  ingredients: [{ pantryItemId: null, amountUsed: '1' }],
+});
+
+const emptyGroupedFoodLogForm = (): GroupedFoodLogFormValues => ({
+  title: '',
+  mealServings: '1',
+  ingredients: [],
+});
+
 const formatEffortLabel = (effortLevel: PantryEffortLevel) =>
   ({
     no_prep: 'No prep',
@@ -99,18 +125,80 @@ const formatEffortLabel = (effortLevel: PantryEffortLevel) =>
     cook: 'Cook',
   })[effortLevel];
 
+const calculateIngredientNutrition = (item: PantryItem, amountUsed: number) => {
+  if (!Number.isFinite(item.serving_amount) || item.serving_amount <= 0) {
+    return {
+      calories: 0,
+      protein: 0,
+    };
+  }
+
+  const ratio = amountUsed / item.serving_amount;
+
+  return {
+    calories: Number((item.calories_per_serving * ratio).toFixed(2)),
+    protein: Number((item.protein_per_serving * ratio).toFixed(2)),
+  };
+};
+
+const summarizeCustomMeal = (meal: CustomMeal) => {
+  const resolvedIngredients = meal.ingredients
+    .map((ingredient) => {
+      const pantryItem = ingredient.pantry_item;
+
+      if (!pantryItem) {
+        return {
+          ingredient,
+          pantryItem: null,
+          calories: 0,
+          protein: 0,
+          hasProblem: true,
+          isArchived: false,
+        };
+      }
+
+      const nutrition = calculateIngredientNutrition(pantryItem, ingredient.amount_used);
+
+      return {
+        ingredient,
+        pantryItem,
+        calories: nutrition.calories,
+        protein: nutrition.protein,
+        hasProblem: !pantryItem.is_active,
+        isArchived: !pantryItem.is_active,
+      };
+    });
+
+  return {
+    calories: Math.round(resolvedIngredients.reduce((sum, ingredient) => sum + ingredient.calories, 0)),
+    protein: Math.round(resolvedIngredients.reduce((sum, ingredient) => sum + ingredient.protein, 0)),
+    ingredientCount: resolvedIngredients.length,
+    hasProblem: resolvedIngredients.some((ingredient) => !ingredient.pantryItem || ingredient.hasProblem),
+    hasArchivedIngredients: resolvedIngredients.some((ingredient) => ingredient.isArchived),
+  };
+};
+
 export function HomeScreen() {
   const { signOut } = useAuth();
   const { user } = useUser();
   const {
+    customMeals,
     error,
     loading,
+    editGroupedFoodLog,
+    loadFoodLogMealItems,
+    logCustomMeal,
     pantryItems,
     profile,
     refresh,
     refreshing,
     clearPantryStock,
+    editFoodLog,
+    removeFoodLog,
+    removeGroupedFoodLog,
+    removeCustomMeal,
     saveFoodLog,
+    saveCustomMeal,
     savePantryItem,
     saveSuggestedMealLog,
     saveTargets,
@@ -130,6 +218,22 @@ export function HomeScreen() {
   const [editingItem, setEditingItem] = useState<PantryItem | null>(null);
   const [pantryForm, setPantryForm] = useState<PantryFormValues>(emptyPantryForm);
   const [logForm, setLogForm] = useState<FoodLogFormValues>(emptyFoodLogForm);
+  const [editLogModalOpen, setEditLogModalOpen] = useState(false);
+  const [editingLogEntry, setEditingLogEntry] = useState<FoodLogEntry | null>(null);
+  const [editLogForm, setEditLogForm] = useState<FoodLogFormValues>(emptyFoodLogForm);
+  const [editingLogMealItems, setEditingLogMealItems] = useState<FoodLogMealItem[]>([]);
+  const [editGroupedLogForm, setEditGroupedLogForm] = useState<GroupedFoodLogFormValues>(emptyGroupedFoodLogForm);
+  const [editGroupedLogPickerIndex, setEditGroupedLogPickerIndex] = useState<number | null>(null);
+  const [loadingLogMealItems, setLoadingLogMealItems] = useState(false);
+  const [confirmDeleteLog, setConfirmDeleteLog] = useState(false);
+  const [customMealModalOpen, setCustomMealModalOpen] = useState(false);
+  const [editingCustomMeal, setEditingCustomMeal] = useState<CustomMeal | null>(null);
+  const [customMealForm, setCustomMealForm] = useState<CustomMealFormValues>(emptyCustomMealForm);
+  const [customMealPickerIndex, setCustomMealPickerIndex] = useState<number | null>(null);
+  const [customMealLogOpen, setCustomMealLogOpen] = useState(false);
+  const [selectedCustomMeal, setSelectedCustomMeal] = useState<CustomMeal | null>(null);
+  const [customMealLogServings, setCustomMealLogServings] = useState('1');
+  const [pendingDeleteMealId, setPendingDeleteMealId] = useState<string | null>(null);
   const [suggestionLogOpen, setSuggestionLogOpen] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState<Suggestion | null>(null);
   const [suggestionLogForm, setSuggestionLogForm] = useState<SuggestionLogValues>({
@@ -142,6 +246,7 @@ export function HomeScreen() {
   const activePantry = pantryItems.filter((item) => item.is_active);
   const stockedPantry = activePantry.filter((item) => hasAnyStock(item));
   const selectedPantryItem = pantryItems.find((item) => item.id === logForm.pantryItemId) ?? null;
+  const editingLogPantryItem = pantryItems.find((item) => item.id === editLogForm.pantryItemId) ?? null;
   const suggestionResult = getSuggestions({
     pantryItems: activePantry,
     todayLogs,
@@ -248,6 +353,329 @@ export function HomeScreen() {
     setLogModalOpen(true);
   };
 
+  const openNewCustomMeal = () => {
+    setEditingCustomMeal(null);
+    setCustomMealForm(emptyCustomMealForm());
+    setPendingDeleteMealId(null);
+    setCustomMealModalOpen(true);
+  };
+
+  const openEditCustomMeal = (meal: CustomMeal) => {
+    setEditingCustomMeal(meal);
+    setPendingDeleteMealId(null);
+    setCustomMealForm({
+      name: meal.name,
+      ingredients: meal.ingredients.map((ingredient) => ({
+        pantryItemId: ingredient.pantry_item_id,
+        amountUsed: String(ingredient.amount_used),
+      })),
+    });
+    setCustomMealModalOpen(true);
+  };
+
+  const closeCustomMealModal = () => {
+    setCustomMealModalOpen(false);
+    setEditingCustomMeal(null);
+    setCustomMealForm(emptyCustomMealForm());
+    setCustomMealPickerIndex(null);
+    setPendingDeleteMealId(null);
+  };
+
+  const addCustomMealIngredient = () => {
+    setCustomMealForm((current) => ({
+      ...current,
+      ingredients: [...current.ingredients, { pantryItemId: null, amountUsed: '1' }],
+    }));
+  };
+
+  const removeCustomMealIngredient = (index: number) => {
+    setCustomMealForm((current) => ({
+      ...current,
+      ingredients: current.ingredients.length === 1
+        ? [{ pantryItemId: null, amountUsed: '1' }]
+        : current.ingredients.filter((_, entryIndex) => entryIndex !== index),
+    }));
+    setCustomMealPickerIndex((current) => {
+      if (current === null) {
+        return null;
+      }
+
+      if (current === index) {
+        return null;
+      }
+
+      if (current > index) {
+        return current - 1;
+      }
+
+      return current;
+    });
+  };
+
+  const updateCustomMealIngredient = (
+    index: number,
+    updates: Partial<CustomMealIngredientForm>,
+  ) => {
+    setCustomMealForm((current) => ({
+      ...current,
+      ingredients: current.ingredients.map((ingredient, entryIndex) =>
+        entryIndex === index
+          ? {
+              ...ingredient,
+              ...updates,
+            }
+          : ingredient),
+    }));
+  };
+
+  const mealFormResolvedIngredients = customMealForm.ingredients.map((ingredient) => {
+    const pantryItem = pantryItems.find((item) => item.id === ingredient.pantryItemId) ?? null;
+    const amountUsed = Number(ingredient.amountUsed);
+
+    if (!pantryItem || !Number.isFinite(amountUsed) || amountUsed <= 0) {
+      return null;
+    }
+
+    const nutrition = calculateIngredientNutrition(pantryItem, amountUsed);
+
+    return {
+      pantryItem,
+      amountUsed,
+      calories: nutrition.calories,
+      protein: nutrition.protein,
+    };
+  }).filter(Boolean) as {
+    pantryItem: PantryItem;
+    amountUsed: number;
+    calories: number;
+    protein: number;
+  }[];
+
+  const mealFormSummary = {
+    calories: Math.round(mealFormResolvedIngredients.reduce((sum, ingredient) => sum + ingredient.calories, 0)),
+    protein: Math.round(mealFormResolvedIngredients.reduce((sum, ingredient) => sum + ingredient.protein, 0)),
+  };
+  const customMealIngredientIds = customMealForm.ingredients.map((ingredient) => ingredient.pantryItemId).filter(Boolean);
+  const customMealFormIssue = !customMealForm.name.trim()
+    ? 'Give the meal a name.'
+    : customMealForm.ingredients.some((ingredient) => !ingredient.pantryItemId)
+      ? 'Choose a pantry item for each ingredient row.'
+      : customMealForm.ingredients.some((ingredient) => !validateNumber(ingredient.amountUsed) || Number(ingredient.amountUsed) <= 0)
+        ? 'Enter a valid positive amount for each ingredient.'
+        : new Set(customMealIngredientIds).size !== customMealIngredientIds.length
+          ? 'Use each pantry item only once per saved meal.'
+          : customMealForm.ingredients.some((ingredient) => {
+              const pantryItem = pantryItems.find((item) => item.id === ingredient.pantryItemId) ?? null;
+              return !pantryItem || !pantryItem.is_active;
+            })
+            ? 'Replace archived or missing pantry items before saving this meal.'
+            : null;
+
+  const groupedLogResolvedIngredients = editGroupedLogForm.ingredients.map((ingredient) => {
+    const pantryItem = pantryItems.find((item) => item.id === ingredient.pantryItemId) ?? null;
+    const mealServings = Number(editGroupedLogForm.mealServings);
+    const amountUsedPerServing = Number(ingredient.amountUsedPerServing);
+
+    if (!pantryItem || !Number.isFinite(mealServings) || mealServings <= 0 || !Number.isFinite(amountUsedPerServing) || amountUsedPerServing <= 0) {
+      return null;
+    }
+
+    const totalAmountUsed = amountUsedPerServing * mealServings;
+    const nutrition = calculateIngredientNutrition(pantryItem, totalAmountUsed);
+
+    return {
+      pantryItem,
+      amountUsedPerServing,
+      totalAmountUsed,
+      calories: nutrition.calories,
+      protein: nutrition.protein,
+    };
+  }).filter(Boolean) as {
+    pantryItem: PantryItem;
+    amountUsedPerServing: number;
+    totalAmountUsed: number;
+    calories: number;
+    protein: number;
+  }[];
+
+  const groupedLogSummary = {
+    calories: Math.round(groupedLogResolvedIngredients.reduce((sum, ingredient) => sum + ingredient.calories, 0)),
+    protein: Math.round(groupedLogResolvedIngredients.reduce((sum, ingredient) => sum + ingredient.protein, 0)),
+  };
+  const groupedLogIngredientIds = editGroupedLogForm.ingredients.map((ingredient) => ingredient.pantryItemId).filter(Boolean);
+  const groupedLogFormIssue = !editGroupedLogForm.title.trim()
+    ? 'Give the grouped meal a name.'
+    : !validateNumber(editGroupedLogForm.mealServings) || Number(editGroupedLogForm.mealServings) <= 0
+      ? 'Enter a valid positive meal servings value.'
+      : !editGroupedLogForm.ingredients.length
+        ? 'Add at least one pantry ingredient.'
+        : editGroupedLogForm.ingredients.some((ingredient) => !ingredient.pantryItemId)
+          ? 'Choose a pantry item for each grouped ingredient row.'
+          : editGroupedLogForm.ingredients.some((ingredient) => !validateNumber(ingredient.amountUsedPerServing) || Number(ingredient.amountUsedPerServing) <= 0)
+            ? 'Enter a valid positive amount for each grouped ingredient.'
+            : new Set(groupedLogIngredientIds).size !== groupedLogIngredientIds.length
+              ? 'Use each pantry item only once in a grouped meal log.'
+              : editGroupedLogForm.ingredients.some((ingredient) => {
+                  const pantryItem = pantryItems.find((item) => item.id === ingredient.pantryItemId) ?? null;
+                  return !pantryItem || !pantryItem.is_active;
+                })
+                ? 'Replace archived or missing pantry items before saving this grouped meal.'
+                : null;
+
+  const submitCustomMeal = async () => {
+    const trimmedName = customMealForm.name.trim();
+
+    if (customMealFormIssue) {
+      return;
+    }
+
+    const payloadIngredients = customMealForm.ingredients.map((ingredient, index) => {
+      return {
+        pantry_item_id: ingredient.pantryItemId as string,
+        amount_used: Number(ingredient.amountUsed),
+        sort_order: index,
+      };
+    });
+
+    await saveCustomMeal(
+      {
+        name: trimmedName,
+        ingredients: payloadIngredients,
+      },
+      editingCustomMeal,
+    );
+
+    closeCustomMealModal();
+  };
+
+  const deleteCurrentCustomMeal = async (meal: CustomMeal) => {
+    if (pendingDeleteMealId !== meal.id) {
+      setPendingDeleteMealId(meal.id);
+      return;
+    }
+
+    await removeCustomMeal(meal);
+    if (editingCustomMeal?.id === meal.id) {
+      closeCustomMealModal();
+      return;
+    }
+
+    setPendingDeleteMealId(null);
+  };
+
+  const openCustomMealLog = (meal: CustomMeal) => {
+    setSelectedCustomMeal(meal);
+    setCustomMealLogServings('1');
+    setCustomMealLogOpen(true);
+  };
+
+  const submitCustomMealLog = async () => {
+    if (!selectedCustomMeal || !validateNumber(customMealLogServings)) {
+      return;
+    }
+
+    await logCustomMeal(selectedCustomMeal, customMealLogServings);
+    setCustomMealLogOpen(false);
+    setSelectedCustomMeal(null);
+    setCustomMealLogServings('1');
+  };
+
+  const closeEditLog = () => {
+    setEditLogModalOpen(false);
+    setEditingLogEntry(null);
+    setEditingLogMealItems([]);
+    setEditGroupedLogForm(emptyGroupedFoodLogForm());
+    setEditGroupedLogPickerIndex(null);
+    setLoadingLogMealItems(false);
+    setEditLogForm(emptyFoodLogForm());
+    setConfirmDeleteLog(false);
+  };
+
+  const openEditLog = async (entry: FoodLogEntry) => {
+    setEditingLogEntry(entry);
+    setConfirmDeleteLog(false);
+    setEditingLogMealItems([]);
+    setEditLogForm({
+      pantryItemId: entry.pantry_item_id,
+      customName: entry.pantry_item?.name ?? entry.custom_name ?? '',
+      servings: String(entry.servings),
+      amountUsed: entry.pantry_amount_used ? String(entry.pantry_amount_used) : '',
+      calories: String(entry.calories),
+      protein: String(entry.protein),
+      notes: entry.notes ?? '',
+    });
+    setEditLogModalOpen(true);
+
+    if (entry.log_source === 'suggested_grouped' || entry.log_source === 'custom_meal_grouped') {
+      setLoadingLogMealItems(true);
+
+      try {
+        const mealItems = await loadFoodLogMealItems(entry.id);
+        setEditingLogMealItems(mealItems);
+        if (mealItems.length) {
+          const safeServings = Number(entry.servings) > 0 ? Number(entry.servings) : 1;
+          setEditGroupedLogForm({
+            title: entry.custom_name ?? 'Grouped meal',
+            mealServings: String(entry.servings),
+            ingredients: mealItems.map((ingredient) => ({
+              pantryItemId: ingredient.pantry_item_id,
+              amountUsedPerServing: String(Number((ingredient.amount_used / safeServings).toFixed(2))),
+            })),
+          });
+        }
+      } finally {
+        setLoadingLogMealItems(false);
+      }
+    }
+  };
+
+  const addGroupedLogIngredient = () => {
+    setEditGroupedLogForm((current) => ({
+      ...current,
+      ingredients: [...current.ingredients, { pantryItemId: null, amountUsedPerServing: '1' }],
+    }));
+  };
+
+  const removeGroupedLogIngredient = (index: number) => {
+    setEditGroupedLogForm((current) => ({
+      ...current,
+      ingredients: current.ingredients.length === 1
+        ? []
+        : current.ingredients.filter((_, entryIndex) => entryIndex !== index),
+    }));
+    setEditGroupedLogPickerIndex((current) => {
+      if (current === null) {
+        return null;
+      }
+
+      if (current === index) {
+        return null;
+      }
+
+      if (current > index) {
+        return current - 1;
+      }
+
+      return current;
+    });
+  };
+
+  const updateGroupedLogIngredient = (
+    index: number,
+    updates: Partial<GroupedFoodLogIngredientFormValue>,
+  ) => {
+    setEditGroupedLogForm((current) => ({
+      ...current,
+      ingredients: current.ingredients.map((ingredient, entryIndex) =>
+        entryIndex === index
+          ? {
+              ...ingredient,
+              ...updates,
+            }
+          : ingredient),
+    }));
+  };
+
   const suggestAgain = () => {
     const currentIds = suggestionResult.suggestions.map((suggestion) => suggestion.id);
     const nextExcludedIds = Array.from(new Set([...dismissedSuggestionIds, ...currentIds]));
@@ -306,6 +734,57 @@ export function HomeScreen() {
       suggestionId: '',
       mealServings: '1',
     });
+  };
+
+  const submitEditLog = async () => {
+    if (!editingLogEntry) {
+      return;
+    }
+
+    if (editingLogEntry.log_source === 'suggested_grouped' || editingLogEntry.log_source === 'custom_meal_grouped') {
+      if (groupedLogFormIssue) {
+        return;
+      }
+
+      const savedMealItems = await editGroupedFoodLog(editingLogEntry, editGroupedLogForm, editingLogMealItems);
+      setEditingLogMealItems(savedMealItems);
+      closeEditLog();
+      return;
+    }
+
+    const hasName = editLogForm.pantryItemId || editLogForm.customName.trim();
+
+    if (
+      !hasName
+      || !validateNumber(editLogForm.servings)
+      || !validateNumber(editLogForm.calories)
+      || !validateNumber(editLogForm.protein)
+    ) {
+      return;
+    }
+
+    await editFoodLog(editingLogEntry, editLogForm);
+    closeEditLog();
+  };
+
+  const deleteCurrentLog = async () => {
+    if (!editingLogEntry) {
+      return;
+    }
+
+    if (!confirmDeleteLog) {
+      setConfirmDeleteLog(true);
+      return;
+    }
+
+    if (editingLogEntry.log_source === 'suggested_grouped' || editingLogEntry.log_source === 'custom_meal_grouped') {
+      await removeGroupedFoodLog(editingLogEntry, editingLogMealItems);
+      closeEditLog();
+      return;
+    }
+
+    await removeFoodLog(editingLogEntry);
+    closeEditLog();
   };
 
   const renderToday = () => (
@@ -367,21 +846,35 @@ export function HomeScreen() {
           <View className="gap-3">
             {todayLogs.map((entry) => (
               <View
-                className="flex-row items-center justify-between rounded-2xl border border-moss/10 bg-oat px-4 py-3"
+                className="rounded-2xl border border-moss/10 bg-oat px-4 py-3"
                 key={entry.id}
               >
-                <View className="flex-1 pr-3">
-                  <Text className="text-base font-semibold text-ink">
-                    {entry.pantry_item?.name ?? entry.custom_name ?? 'Food log'}
-                  </Text>
-                  <Text className="mt-1 text-sm text-ink/60">
-                    {entry.servings} serving(s) • {formatTime(entry.logged_at)}
+                <View className="flex-row items-center justify-between gap-3">
+                  <View className="flex-1 pr-3">
+                    <Text className="text-base font-semibold text-ink">
+                      {entry.pantry_item?.name ?? entry.custom_name ?? 'Food log'}
+                    </Text>
+                    <Text className="mt-1 text-sm text-ink/60">
+                      {entry.servings} serving(s) • {formatTime(entry.logged_at)}
+                    </Text>
+                    {entry.log_source === 'suggested_grouped' || entry.log_source === 'custom_meal_grouped' ? (
+                      <Text className="mt-1 text-sm text-moss">Grouped meal entry</Text>
+                    ) : null}
+                  </View>
+                  <Text className="text-right text-sm font-semibold text-pine">
+                    {entry.calories} cal{'\n'}
+                    {entry.protein}g protein
                   </Text>
                 </View>
-                <Text className="text-right text-sm font-semibold text-pine">
-                  {entry.calories} cal{'\n'}
-                  {entry.protein}g protein
-                </Text>
+                <View className="mt-3">
+                  <PrimaryButton
+                    label={entry.log_source === 'suggested_grouped' || entry.log_source === 'custom_meal_grouped' ? 'Edit meal' : 'Edit entry'}
+                    onPress={() => {
+                      void openEditLog(entry);
+                    }}
+                    variant="ghost"
+                  />
+                </View>
               </View>
             ))}
           </View>
@@ -876,6 +1369,498 @@ export function HomeScreen() {
           />
           <PrimaryButton disabled={submitting} label={submitting ? 'Saving...' : 'Save log'} onPress={submitLog} />
         </SheetStack>
+      </ModalSheet>
+
+      <ModalSheet
+        onClose={closeEditLog}
+        open={editLogModalOpen}
+        title={editingLogEntry?.log_source === 'suggested_grouped' || editingLogEntry?.log_source === 'custom_meal_grouped' ? 'Edit meal' : 'Edit log'}
+      >
+        {editingLogEntry ? (
+          editingLogEntry.log_source === 'suggested_grouped' || editingLogEntry.log_source === 'custom_meal_grouped' ? (
+            <SheetStack>
+              {loadingLogMealItems ? (
+                <LoadingBlock label="Loading meal details..." />
+              ) : editingLogMealItems.length ? (
+                <SheetStack>
+                  <Field
+                    label="Meal title"
+                    onChangeText={(text) => setEditGroupedLogForm((current) => ({ ...current, title: text }))}
+                    placeholder="Tuna + crackers"
+                    value={editGroupedLogForm.title}
+                  />
+                  <Field
+                    blurOnSubmit
+                    keyboardType="numeric"
+                    label="Meal servings"
+                    onChangeText={(text) => setEditGroupedLogForm((current) => ({ ...current, mealServings: text }))}
+                    placeholder="1"
+                    returnKeyType="done"
+                    value={editGroupedLogForm.mealServings}
+                  />
+                  <SheetStack className="gap-3">
+                    <Text className="text-sm font-semibold uppercase tracking-[1px] text-ink/55">Ingredients</Text>
+                    {editGroupedLogForm.ingredients.map((ingredient, index) => {
+                      const pantryItem = pantryItems.find((item) => item.id === ingredient.pantryItemId) ?? null;
+                      const resolvedIngredient = groupedLogResolvedIngredients.find((item) => item.pantryItem.id === ingredient.pantryItemId);
+
+                      return (
+                        <SheetSurface className="rounded-2xl bg-white px-4 py-4" key={`grouped-ingredient-${index}`}>
+                          <View className="flex-row items-start justify-between gap-4">
+                            <View className="flex-1">
+                              <Text className="text-sm font-medium text-ink/60">Ingredient {index + 1}</Text>
+                              <Text className="mt-1 text-base font-semibold text-ink">
+                                {pantryItem?.name ?? 'Choose pantry item'}
+                              </Text>
+                              {resolvedIngredient ? (
+                                <Text className="mt-1 text-sm text-moss">
+                                  Total now: {formatAmountWithUnit(resolvedIngredient.totalAmountUsed, pantryItem?.serving_unit ?? 'serving')}
+                                </Text>
+                              ) : pantryItem ? (
+                                <Text className="mt-1 text-sm text-moss">
+                                  {formatAmountWithUnit(pantryItem.stock_amount, pantryItem.serving_unit)} currently in stock
+                                </Text>
+                              ) : null}
+                            </View>
+                            <View className="w-28 gap-2">
+                              <PrimaryButton
+                                label={pantryItem ? 'Change' : 'Choose'}
+                                onPress={() => setEditGroupedLogPickerIndex(index)}
+                                variant="ghost"
+                              />
+                              <PrimaryButton
+                                label="Remove"
+                                onPress={() => removeGroupedLogIngredient(index)}
+                                variant="outline"
+                              />
+                            </View>
+                          </View>
+                          <View className="mt-4">
+                            <Field
+                              blurOnSubmit
+                              keyboardType="numeric"
+                              label={pantryItem ? `Amount per meal serving (${formatUnitLabel(pantryItem.serving_unit, 2)})` : 'Amount per meal serving'}
+                              onChangeText={(text) => updateGroupedLogIngredient(index, { amountUsedPerServing: text })}
+                              placeholder="1"
+                              returnKeyType="done"
+                              value={ingredient.amountUsedPerServing}
+                            />
+                          </View>
+                          {resolvedIngredient ? (
+                            <Text className="mt-2 text-sm text-ink/65">
+                              {formatCalories(Math.round(resolvedIngredient.calories))} • {formatProtein(Math.round(resolvedIngredient.protein))}
+                            </Text>
+                          ) : null}
+                          {editGroupedLogPickerIndex === index ? (
+                            <View className="mt-4 gap-3 rounded-2xl border border-moss/10 bg-oat px-4 py-4">
+                              <View className="flex-row items-center justify-between gap-3">
+                                <Text className="text-sm font-semibold uppercase tracking-[1px] text-ink/55">
+                                  Choose pantry item
+                                </Text>
+                                <Pressable onPress={() => setEditGroupedLogPickerIndex(null)}>
+                                  <Text className="text-sm font-semibold text-clay">Done</Text>
+                                </Pressable>
+                              </View>
+                              {activePantry.length ? (
+                                <View className="gap-2">
+                                  {activePantry.map((item) => {
+                                    const isSelected = ingredient.pantryItemId === item.id;
+
+                                    return (
+                                      <Pressable
+                                        className={`rounded-2xl border px-4 py-3 ${isSelected ? 'border-pine bg-white' : 'border-moss/10 bg-white'}`}
+                                        key={item.id}
+                                        onPress={() => {
+                                          updateGroupedLogIngredient(index, {
+                                            pantryItemId: item.id,
+                                          });
+                                          setEditGroupedLogPickerIndex(null);
+                                        }}
+                                      >
+                                        <View className="flex-row items-center justify-between gap-3">
+                                          <View className="flex-1">
+                                            <Text className="text-base font-semibold text-ink">{item.name}</Text>
+                                            <Text className="mt-1 text-sm text-ink/60">
+                                              {item.default_serving} • {formatCalories(item.calories_per_serving)} • {formatProtein(item.protein_per_serving)}
+                                            </Text>
+                                            <Text className="mt-1 text-sm text-moss">
+                                              {formatAmountWithUnit(item.stock_amount, item.serving_unit)} in stock
+                                            </Text>
+                                          </View>
+                                          <Text className={`text-sm font-semibold ${isSelected ? 'text-pine' : 'text-ink/55'}`}>
+                                            {isSelected ? 'Selected' : 'Use'}
+                                          </Text>
+                                        </View>
+                                      </Pressable>
+                                    );
+                                  })}
+                                </View>
+                              ) : (
+                                <EmptyState
+                                  actionLabel="Open pantry"
+                                  description="Add and activate pantry items before you edit grouped meals."
+                                  onPress={() => {
+                                    setEditGroupedLogPickerIndex(null);
+                                    setEditLogModalOpen(false);
+                                    setActiveTab('pantry');
+                                  }}
+                                  title="No active pantry items"
+                                />
+                              )}
+                            </View>
+                          ) : null}
+                        </SheetSurface>
+                      );
+                    })}
+                  </SheetStack>
+                  <PrimaryButton label="Add ingredient" onPress={addGroupedLogIngredient} variant="secondary" />
+                  <SheetSurface className="rounded-2xl bg-white px-4 py-4">
+                    <Text className="text-sm font-medium text-ink/60">Derived nutrition</Text>
+                    <Text className="mt-1 text-base font-semibold text-ink">
+                      {formatCalories(groupedLogSummary.calories)} • {formatProtein(groupedLogSummary.protein)}
+                    </Text>
+                    {groupedLogFormIssue ? (
+                      <Text className="mt-2 text-sm leading-5 text-clay">{groupedLogFormIssue}</Text>
+                    ) : null}
+                  </SheetSurface>
+                  {confirmDeleteLog ? (
+                    <SheetSurface className="rounded-2xl bg-oat px-4 py-3">
+                      <Text className="text-sm font-semibold text-clay">Tap delete again to confirm</Text>
+                      <Text className="mt-1 text-sm leading-5 text-ink/65">
+                        Deleting this grouped meal restores all linked ingredient stock.
+                      </Text>
+                    </SheetSurface>
+                  ) : null}
+                  <PrimaryButton
+                    disabled={submitting || Boolean(groupedLogFormIssue)}
+                    label={submitting ? 'Saving...' : 'Save changes'}
+                    onPress={submitEditLog}
+                  />
+                  <PrimaryButton
+                    disabled={submitting}
+                    label={confirmDeleteLog ? (submitting ? 'Deleting...' : 'Confirm delete') : 'Delete meal'}
+                    onPress={deleteCurrentLog}
+                    variant="danger"
+                  />
+                </SheetStack>
+              ) : (
+                <SheetSurface className="rounded-2xl bg-white px-4 py-4">
+                  <Text className="text-sm font-medium text-ink/60">Meal</Text>
+                  <Text className="mt-1 text-base font-semibold text-ink">
+                    {editingLogEntry.custom_name ?? 'Grouped meal'}
+                  </Text>
+                  <Text className="text-sm leading-5 text-ink/65">
+                    This older grouped log does not have structured ingredient details saved yet, so it stays view-only for now.
+                  </Text>
+                </SheetSurface>
+              )}
+            </SheetStack>
+          ) : (
+            <SheetStack>
+              {!editLogForm.pantryItemId ? (
+                <Field
+                  label="Food name"
+                  onChangeText={(text) => setEditLogForm((current) => ({ ...current, customName: text }))}
+                  placeholder="Eggs and toast"
+                  value={editLogForm.customName}
+                />
+              ) : (
+                <SheetSurface className="rounded-2xl bg-white px-4 py-3">
+                  <Text className="text-sm font-medium text-ink/60">Pantry item</Text>
+                  <Text className="mt-1 text-base font-semibold text-ink">{editLogForm.customName}</Text>
+                  {editingLogPantryItem ? (
+                    <Text className="mt-1 text-sm text-moss">
+                      {formatAmountWithUnit(editingLogPantryItem.stock_amount, editingLogPantryItem.serving_unit)} available before correction
+                    </Text>
+                  ) : null}
+                </SheetSurface>
+              )}
+              <View className="flex-row gap-3">
+                <View className="flex-1">
+                  <Field
+                    blurOnSubmit
+                    keyboardType="numeric"
+                    label="Servings"
+                    onChangeText={(text) => setEditLogForm((current) => ({ ...current, servings: text }))}
+                    placeholder="1"
+                    returnKeyType="done"
+                    value={editLogForm.servings}
+                  />
+                </View>
+                <View className="flex-1">
+                  <Field
+                    blurOnSubmit
+                    keyboardType="numeric"
+                    label="Calories"
+                    onChangeText={(text) => setEditLogForm((current) => ({ ...current, calories: text }))}
+                    placeholder="450"
+                    returnKeyType="done"
+                    value={editLogForm.calories}
+                  />
+                </View>
+              </View>
+              <Field
+                blurOnSubmit
+                keyboardType="numeric"
+                label="Protein (g)"
+                onChangeText={(text) => setEditLogForm((current) => ({ ...current, protein: text }))}
+                placeholder="30"
+                returnKeyType="done"
+                value={editLogForm.protein}
+              />
+              {editingLogPantryItem ? (
+                <Field
+                  blurOnSubmit
+                  keyboardType="numeric"
+                  label={`Amount used (${formatUnitLabel(editingLogPantryItem.serving_unit, 2)})`}
+                  onChangeText={(text) => setEditLogForm((current) => ({ ...current, amountUsed: text }))}
+                  placeholder={`Optional, defaults to ${formatInventoryNumber(Number(editLogForm.servings || '1') * editingLogPantryItem.serving_amount)}`}
+                  returnKeyType="done"
+                  value={editLogForm.amountUsed}
+                />
+              ) : null}
+              <Field
+                label="Notes"
+                multiline
+                onChangeText={(text) => setEditLogForm((current) => ({ ...current, notes: text }))}
+                placeholder="Optional context"
+                value={editLogForm.notes}
+              />
+              {confirmDeleteLog ? (
+                <SheetSurface className="rounded-2xl bg-oat px-4 py-3">
+                  <Text className="text-sm font-semibold text-clay">Tap delete again to confirm</Text>
+                  <Text className="mt-1 text-sm leading-5 text-ink/65">
+                    Pantry-linked logs will restore the saved amount back to inventory.
+                  </Text>
+                </SheetSurface>
+              ) : null}
+              <PrimaryButton
+                disabled={submitting}
+                label={submitting ? 'Saving...' : 'Save changes'}
+                onPress={submitEditLog}
+              />
+              <PrimaryButton
+                disabled={submitting}
+                label={confirmDeleteLog ? (submitting ? 'Deleting...' : 'Confirm delete') : 'Delete log'}
+                onPress={deleteCurrentLog}
+                variant="danger"
+              />
+            </SheetStack>
+          )
+        ) : null}
+      </ModalSheet>
+
+      <ModalSheet
+        onClose={closeCustomMealModal}
+        open={customMealModalOpen}
+        title={editingCustomMeal ? 'Edit custom meal' : 'Create custom meal'}
+      >
+        <SheetStack>
+          <Field
+            label="Meal name"
+            onChangeText={(text) => setCustomMealForm((current) => ({ ...current, name: text }))}
+            placeholder="Yogurt + berries + granola"
+            value={customMealForm.name}
+          />
+          <SheetStack className="gap-3">
+            <Text className="text-sm font-semibold uppercase tracking-[1px] text-ink/55">Ingredients</Text>
+            {customMealForm.ingredients.map((ingredient, index) => {
+              const pantryItem = pantryItems.find((item) => item.id === ingredient.pantryItemId) ?? null;
+
+              return (
+                <SheetSurface className="rounded-2xl bg-white px-4 py-4" key={`meal-ingredient-${index}`}>
+                  <View className="flex-row items-start justify-between gap-4">
+                    <View className="flex-1">
+                      <Text className="text-sm font-medium text-ink/60">Ingredient {index + 1}</Text>
+                      <Text className="mt-1 text-base font-semibold text-ink">
+                        {pantryItem?.name ?? 'Choose pantry item'}
+                      </Text>
+                      {pantryItem ? (
+                        <Text className={`mt-1 text-sm ${pantryItem.is_active ? 'text-moss' : 'text-clay'}`}>
+                          {pantryItem.is_active
+                            ? `${formatAmountWithUnit(pantryItem.stock_amount, pantryItem.serving_unit)} in stock`
+                            : 'Archived pantry item, choose a replacement before saving'}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View className="w-28 gap-2">
+                      <PrimaryButton
+                        label={pantryItem ? 'Change' : 'Choose'}
+                        onPress={() => setCustomMealPickerIndex(index)}
+                        variant="ghost"
+                      />
+                      <PrimaryButton
+                        label="Remove"
+                        onPress={() => removeCustomMealIngredient(index)}
+                        variant="outline"
+                      />
+                    </View>
+                  </View>
+                  <View className="mt-4">
+                    <Field
+                      blurOnSubmit
+                      keyboardType="numeric"
+                      label={pantryItem ? `Amount used (${formatUnitLabel(pantryItem.serving_unit, 2)})` : 'Amount used'}
+                      onChangeText={(text) => updateCustomMealIngredient(index, { amountUsed: text })}
+                      placeholder="1"
+                      returnKeyType="done"
+                      value={ingredient.amountUsed}
+                    />
+                  </View>
+                  {customMealPickerIndex === index ? (
+                    <View className="mt-4 gap-3 rounded-2xl border border-moss/10 bg-oat px-4 py-4">
+                      <View className="flex-row items-center justify-between gap-3">
+                        <Text className="text-sm font-semibold uppercase tracking-[1px] text-ink/55">
+                          Choose pantry item
+                        </Text>
+                        <Pressable onPress={() => setCustomMealPickerIndex(null)}>
+                          <Text className="text-sm font-semibold text-clay">Done</Text>
+                        </Pressable>
+                      </View>
+                      {activePantry.length ? (
+                        <View className="gap-2">
+                          {activePantry.map((item) => {
+                            const isSelected = ingredient.pantryItemId === item.id;
+
+                            return (
+                              <Pressable
+                                className={`rounded-2xl border px-4 py-3 ${isSelected ? 'border-pine bg-white' : 'border-moss/10 bg-white'}`}
+                                key={item.id}
+                                onPress={() => {
+                                  updateCustomMealIngredient(index, {
+                                    pantryItemId: item.id,
+                                  });
+                                  setCustomMealPickerIndex(null);
+                                }}
+                              >
+                                <View className="flex-row items-center justify-between gap-3">
+                                  <View className="flex-1">
+                                    <Text className="text-base font-semibold text-ink">{item.name}</Text>
+                                    <Text className="mt-1 text-sm text-ink/60">
+                                      {item.default_serving} • {formatCalories(item.calories_per_serving)} • {formatProtein(item.protein_per_serving)}
+                                    </Text>
+                                    <Text className="mt-1 text-sm text-moss">
+                                      {formatAmountWithUnit(item.stock_amount, item.serving_unit)} in stock
+                                    </Text>
+                                  </View>
+                                  <Text className={`text-sm font-semibold ${isSelected ? 'text-pine' : 'text-ink/55'}`}>
+                                    {isSelected ? 'Selected' : 'Use'}
+                                  </Text>
+                                </View>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      ) : (
+                        <EmptyState
+                          actionLabel="Open pantry"
+                          description="Add and activate pantry items before you build a reusable custom meal."
+                          onPress={() => {
+                            setCustomMealPickerIndex(null);
+                            setCustomMealModalOpen(false);
+                            setActiveTab('pantry');
+                          }}
+                          title="No active pantry items"
+                        />
+                      )}
+                    </View>
+                  ) : null}
+                </SheetSurface>
+              );
+            })}
+          </SheetStack>
+          <PrimaryButton label="Add ingredient" onPress={addCustomMealIngredient} variant="secondary" />
+          <SheetSurface className="rounded-2xl bg-white px-4 py-4">
+            <Text className="text-sm font-medium text-ink/60">Derived nutrition</Text>
+            <Text className="mt-1 text-base font-semibold text-ink">
+              {formatCalories(mealFormSummary.calories)} • {formatProtein(mealFormSummary.protein)}
+            </Text>
+            <Text className="mt-2 text-sm leading-5 text-ink/65">
+              Totals come directly from the linked pantry ingredients and amounts used above.
+            </Text>
+            {customMealFormIssue ? (
+              <Text className="mt-2 text-sm leading-5 text-clay">{customMealFormIssue}</Text>
+            ) : null}
+          </SheetSurface>
+          {pendingDeleteMealId === editingCustomMeal?.id ? (
+            <SheetSurface className="rounded-2xl bg-oat px-4 py-3">
+              <Text className="text-sm font-semibold text-clay">Tap delete again to confirm</Text>
+            </SheetSurface>
+          ) : null}
+          <PrimaryButton
+            disabled={submitting || Boolean(customMealFormIssue)}
+            label={submitting ? 'Saving...' : editingCustomMeal ? 'Save meal' : 'Create meal'}
+            onPress={submitCustomMeal}
+          />
+          {editingCustomMeal ? (
+            <PrimaryButton
+              disabled={submitting}
+              label={pendingDeleteMealId === editingCustomMeal.id ? 'Confirm delete' : 'Delete meal'}
+              onPress={() => deleteCurrentCustomMeal(editingCustomMeal)}
+              variant="danger"
+            />
+          ) : null}
+        </SheetStack>
+      </ModalSheet>
+
+      <ModalSheet
+        onClose={() => {
+          setCustomMealLogOpen(false);
+          setSelectedCustomMeal(null);
+          setCustomMealLogServings('1');
+        }}
+        open={customMealLogOpen}
+        title="Log custom meal"
+      >
+        {selectedCustomMeal ? (
+          <SheetStack>
+            <SheetSurface className="rounded-2xl bg-white px-4 py-4">
+              <Text className="text-sm font-medium text-ink/60">Meal</Text>
+              <Text className="mt-1 text-base font-semibold text-ink">{selectedCustomMeal.name}</Text>
+              <Text className="mt-2 text-sm leading-5 text-ink/65">
+                Logs one grouped entry while deducting each pantry ingredient behind the scenes.
+              </Text>
+            </SheetSurface>
+            <View className="flex-row flex-wrap gap-2">
+              <InfoPill label={formatCalories(summarizeCustomMeal(selectedCustomMeal).calories * Number(customMealLogServings || '1'))} />
+              <InfoPill label={formatProtein(summarizeCustomMeal(selectedCustomMeal).protein * Number(customMealLogServings || '1'))} />
+            </View>
+            <Field
+              blurOnSubmit
+              keyboardType="numeric"
+              label="Meal servings"
+              onChangeText={setCustomMealLogServings}
+              placeholder="1"
+              returnKeyType="done"
+              value={customMealLogServings}
+            />
+            <SheetStack className="gap-2">
+              <Text className="text-sm font-semibold uppercase tracking-[1px] text-ink/55">Ingredient deduction</Text>
+              {selectedCustomMeal.ingredients.map((ingredient) => {
+                const scaledMealServings = Number(customMealLogServings || '1');
+                const scaledAmount = ingredient.amount_used * (Number.isFinite(scaledMealServings) ? scaledMealServings : 1);
+
+                return (
+                  <SheetSurface className="rounded-2xl bg-white px-4 py-3" key={ingredient.id}>
+                    <Text className="text-base font-semibold text-ink">
+                      {ingredient.pantry_item?.name ?? 'Pantry ingredient'}
+                    </Text>
+                    <Text className="mt-1 text-sm text-ink/65">
+                      Uses {ingredient.pantry_item
+                        ? formatAmountWithUnit(scaledAmount, ingredient.pantry_item.serving_unit)
+                        : `${scaledAmount} units`}
+                    </Text>
+                  </SheetSurface>
+                );
+              })}
+            </SheetStack>
+            <PrimaryButton
+              disabled={submitting || !validateNumber(customMealLogServings)}
+              label={submitting ? 'Logging...' : 'Log meal'}
+              onPress={submitCustomMealLog}
+            />
+          </SheetStack>
+        ) : null}
       </ModalSheet>
 
       <ModalSheet
