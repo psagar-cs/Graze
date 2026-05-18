@@ -118,14 +118,16 @@ Roadmap order:
 3. Grouped meal editing
 4. Expiry tracking
 5. Suggestion refinement
-6. UI and look-and-feel polish
-7. Out-of-pantry UX polish if still needed
+6. Lightweight recommendation-priority controls
+7. UI and look-and-feel polish
+8. Out-of-pantry UX polish if still needed
 
 Why this order:
 - The current app stores food logs as mostly flat rows.
 - Suggested/grouped meals still save as one visible food log plus pantry stock deductions behind the scenes.
 - A reusable meal-composition layer should land before ingredient-level grouped-meal editing to avoid rework.
 - Expiry tracking should land before the next ranking pass so suggestion logic can use expiry signals directly.
+- Lightweight recommendation-priority controls should come after engine refinement so they sit on top of a stronger default ranking rather than compensating for a weak one.
 - Core logging, meal composition, and inventory behavior should stabilize before a broader UI polish pass.
 - Expiry-aware suggestion logic will likely reshape the `Next` tab, so polishing that experience too early risks rework.
 
@@ -156,10 +158,12 @@ Implementation guidance:
 - Factor in soon-to-expire ingredients, effort level, and meal coherence more strongly during ranking.
 - Persist suggestion feedback such as dismissals or accepted suggestions across sessions.
 - Revisit out-of-pantry UX as a clearer front-end flow only if the current manual custom-log path still feels too hidden.
+- After the engine is stronger, consider lightweight recommendation-priority controls in `Next`, such as prioritize low effort, prioritize protein, use soon-to-expire items, surprise me, or use a specific ingredient.
 
 Implementation guidance:
 - Keep manual custom logs as the underlying out-of-pantry model for now rather than introducing a separate meal type.
 - Prefer ranking/filtering improvements over any LLM-style meal generation redesign.
+- Treat future recommendation controls as priority presets, not raw sort toggles.
 
 ### UI And Product Feel
 
