@@ -14,6 +14,7 @@ import {
 } from '../components/ui';
 import { useGrazeData } from '../hooks/useGrazeData';
 import { formatTime } from '../lib/dates';
+import { getExpiryStatus } from '../lib/expiry';
 import { formatCalories, formatProtein } from '../lib/format';
 import {
   formatAmountWithUnit,
@@ -245,6 +246,57 @@ export function HomeScreen() {
 
   const activePantry = pantryItems.filter((item) => item.is_active);
   const stockedPantry = activePantry.filter((item) => hasAnyStock(item));
+  const sortedPantryItems = [...pantryItems].sort((left, right) => {
+    if (left.is_active !== right.is_active) {
+      return left.is_active ? -1 : 1;
+    }
+
+    if (!left.is_active && !right.is_active) {
+      return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+    }
+
+    const leftExpiry = getExpiryStatus(left.expires_on);
+    const rightExpiry = getExpiryStatus(right.expires_on);
+    const getPriority = (value: ReturnType<typeof getExpiryStatus>) => {
+      if (value.isExpired) {
+        return 0;
+      }
+
+      if (value.isToday) {
+        return 1;
+      }
+
+      if (value.isSoon) {
+        return 2;
+      }
+
+      if (value.hasExpiry) {
+        return 3;
+      }
+
+      return 4;
+    };
+
+    const priorityDifference = getPriority(leftExpiry) - getPriority(rightExpiry);
+
+    if (priorityDifference !== 0) {
+      return priorityDifference;
+    }
+
+    if (leftExpiry.daysUntil !== null && rightExpiry.daysUntil !== null && leftExpiry.daysUntil !== rightExpiry.daysUntil) {
+      return leftExpiry.daysUntil - rightExpiry.daysUntil;
+    }
+
+    if (leftExpiry.daysUntil !== null && rightExpiry.daysUntil === null) {
+      return -1;
+    }
+
+    if (leftExpiry.daysUntil === null && rightExpiry.daysUntil !== null) {
+      return 1;
+    }
+
+    return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+  });
   const selectedPantryItem = pantryItems.find((item) => item.id === logForm.pantryItemId) ?? null;
   const editingLogPantryItem = pantryItems.find((item) => item.id === editLogForm.pantryItemId) ?? null;
   const suggestionResult = getSuggestions({
@@ -309,6 +361,7 @@ export function HomeScreen() {
       stockEntryMode: 'amount',
       stockAmount: String(item.stock_amount),
       stockServings: String(getServingsInStock(item)),
+      expiresOn: item.expires_on ?? '',
       caloriesPerServing: String(item.calories_per_serving),
       proteinPerServing: String(item.protein_per_serving),
       quantityLabel: item.quantity_label,
@@ -1006,42 +1059,58 @@ export function HomeScreen() {
         <View className="mb-1">
           <PrimaryButton label="Add pantry item" onPress={openNewPantry} />
         </View>
-        {pantryItems.length ? (
+        {sortedPantryItems.length ? (
           <View className="gap-3">
-            {pantryItems.map((item) => (
-              <View className="rounded-2xl border border-moss/10 bg-oat px-4 py-4" key={item.id}>
-                <View className="flex-row items-start justify-between gap-4">
-                  <View className="flex-1">
-                    <Text className="text-base font-semibold text-ink">{item.name}</Text>
-                    <Text className="mt-1 text-sm leading-5 text-ink/65">
-                      {item.default_serving} • {formatCalories(item.calories_per_serving)} • {formatProtein(item.protein_per_serving)}
-                    </Text>
-                    <Text className="mt-1 text-sm text-moss">
-                      {formatAmountWithUnit(item.stock_amount, item.serving_unit)} in stock • {formatInventoryNumber(getServingsInStock(item))} servings available
-                    </Text>
-                    <Text className="mt-1 text-sm text-moss">
-                      {item.quantity_label} • {item.is_active ? 'Active' : 'Archived'}
-                    </Text>
-                    <Text className="mt-1 text-sm text-ink/55">
-                      {item.category} • {formatEffortLabel(item.effort_level)} • {item.meal_role}
-                    </Text>
-                  </View>
-                  <View className="w-28 gap-2">
-                    <PrimaryButton label="Edit" onPress={() => openEditPantry(item)} variant="ghost" />
-                    <PrimaryButton
-                      label="Clear stock"
-                      onPress={() => clearPantryStock(item)}
-                      variant="outline"
-                    />
-                    <PrimaryButton
-                      label={item.is_active ? 'Archive' : 'Restore'}
-                      onPress={() => togglePantryItem(item)}
-                      variant={item.is_active ? 'danger' : 'secondary'}
-                    />
+            {sortedPantryItems.map((item) => {
+              const expiryStatus = getExpiryStatus(item.expires_on);
+              const expiryTone = expiryStatus.isExpired || expiryStatus.isToday
+                ? 'text-clay'
+                : expiryStatus.isSoon
+                  ? 'text-pine'
+                  : 'text-ink/55';
+
+              return (
+                <View className="rounded-2xl border border-moss/10 bg-oat px-4 py-4" key={item.id}>
+                  <View className="flex-row items-start justify-between gap-4">
+                    <View className="flex-1">
+                      <Text className="text-base font-semibold text-ink">{item.name}</Text>
+                      <Text className="mt-1 text-sm leading-5 text-ink/65">
+                        {item.default_serving} • {formatCalories(item.calories_per_serving)} • {formatProtein(item.protein_per_serving)}
+                      </Text>
+                      <Text className="mt-1 text-sm text-moss">
+                        {formatAmountWithUnit(item.stock_amount, item.serving_unit)} in stock • {formatInventoryNumber(getServingsInStock(item))} servings available
+                      </Text>
+                      <Text className="mt-1 text-sm text-moss">
+                        {item.quantity_label} • {item.is_active ? 'Active' : 'Archived'}
+                      </Text>
+                      {expiryStatus.label ? (
+                        <Text className={`mt-1 text-sm ${expiryTone}`}>
+                          {expiryStatus.label}
+                        </Text>
+                      ) : (
+                        <Text className="mt-1 text-sm text-ink/55">No expiry set</Text>
+                      )}
+                      <Text className="mt-1 text-sm text-ink/55">
+                        {item.category} • {formatEffortLabel(item.effort_level)} • {item.meal_role}
+                      </Text>
+                    </View>
+                    <View className="w-28 gap-2">
+                      <PrimaryButton label="Edit" onPress={() => openEditPantry(item)} variant="ghost" />
+                      <PrimaryButton
+                        label="Clear stock"
+                        onPress={() => clearPantryStock(item)}
+                        variant="outline"
+                      />
+                      <PrimaryButton
+                        label={item.is_active ? 'Archive' : 'Restore'}
+                        onPress={() => togglePantryItem(item)}
+                        variant={item.is_active ? 'danger' : 'secondary'}
+                      />
+                    </View>
                   </View>
                 </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
         ) : (
           <EmptyState
@@ -1286,6 +1355,24 @@ export function HomeScreen() {
           <Text className="text-sm leading-5 text-ink/60">
             Default serving: {formatAmountWithUnit(Number(pantryForm.servingAmount || '0'), pantryForm.servingUnit)}
           </Text>
+          <Field
+            autoCapitalize="none"
+            label="Expiry date (optional)"
+            onChangeText={(text) => setPantryForm((current) => ({ ...current, expiresOn: text }))}
+            placeholder="YYYY-MM-DD"
+            value={pantryForm.expiresOn}
+          />
+          {pantryForm.expiresOn.trim() ? (
+            <PrimaryButton
+              label="Clear expiry"
+              onPress={() => setPantryForm((current) => ({ ...current, expiresOn: '' }))}
+              variant="ghost"
+            />
+          ) : (
+            <Text className="text-sm leading-5 text-ink/60">
+              Leave blank if you do not want Graze to track an expiry date for this item yet.
+            </Text>
+          )}
           <View className="flex-row gap-3">
             <View className="flex-1">
               <Field
