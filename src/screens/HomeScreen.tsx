@@ -1149,6 +1149,9 @@ export function HomeScreen() {
             Suggestions are built only from active pantry items and ranked for effort, coherence, and what you still have left today.
           </Text>
         )}
+        <Text className="text-sm leading-5 text-ink/65">
+          Showing 3 good options from your pantry right now. Refresh to cycle through other valid combinations.
+        </Text>
         <PrimaryButton
           label={suggestionResult.suggestions.length ? 'Suggest again' : 'Refresh suggestions'}
           onPress={suggestAgain}
@@ -1159,6 +1162,11 @@ export function HomeScreen() {
       {suggestionResult.suggestions.length ? (
         suggestionResult.suggestions.map((suggestion) => (
           <SectionCard key={suggestion.id} subtitle={suggestion.description} title={suggestion.title}>
+            {suggestion.expiryWarning ? (
+              <View className="self-start rounded-2xl border border-clay/20 bg-clay/10 px-3 py-2">
+                <Text className="text-xs font-semibold leading-5 text-clay">{suggestion.expiryWarning}</Text>
+              </View>
+            ) : null}
             <View className="flex-row flex-wrap gap-2">
               <InfoPill label={formatCalories(suggestion.estimatedCalories)} />
               <InfoPill label={formatProtein(suggestion.estimatedProtein)} />
@@ -1199,9 +1207,6 @@ export function HomeScreen() {
                   }
                   variant="ghost"
                 />
-              </View>
-              <View className="flex-1">
-                <PrimaryButton label="Suggest again" onPress={suggestAgain} variant="secondary" />
               </View>
             </View>
           </SectionCard>

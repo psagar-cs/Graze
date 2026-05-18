@@ -10,6 +10,7 @@ import type {
   SuggestionGoal,
   TodaySummary,
 } from '../types';
+import { getExpiryStatus } from '../lib/expiry';
 import { buildDefaultServingLabel } from '../lib/inventory';
 import { hasAtLeastOneServingInStock } from '../lib/inventory';
 
@@ -109,6 +110,20 @@ const normalizeName = (value: string) => value.trim().toLowerCase();
 const inferredCategory = (item: PantryItem) => {
   if (item.category !== 'other') {
     return item.category;
+  }
+
+  const role = inferredMealRole(item);
+
+  if (role === 'base') {
+    return 'carb';
+  }
+
+  if (role === 'condiment') {
+    return 'condiment';
+  }
+
+  if (role === 'snack') {
+    return 'snack';
   }
 
   const name = normalizeName(item.name);
@@ -253,11 +268,15 @@ const classifyItems = (items: PantryItem[]) => {
     snacks: [] as PantryItem[],
     condiments: [] as PantryItem[],
     fats: [] as PantryItem[],
+    vegetables: [] as PantryItem[],
+    bases: [] as PantryItem[],
+    toppings: [] as PantryItem[],
     other: [] as PantryItem[],
   };
 
   items.forEach((item) => {
     const category = inferredCategory(item);
+    const role = inferredMealRole(item);
 
     switch (category) {
       case 'protein':
@@ -312,6 +331,13 @@ const generateCandidates = (
       );
     });
 
+    groups.vegetables.forEach((vegetable) => {
+      addUniqueCandidate(
+        candidates,
+        buildCandidate('protein-vegetable', [protein, vegetable], 'A lean protein-forward option when you want something lighter but still meal-like.', dayPart, summary),
+      );
+    });
+
     groups.snacks.forEach((snack) => {
       addUniqueCandidate(
         candidates,
@@ -335,10 +361,17 @@ const generateCandidates = (
           buildCandidate('dairy-fruit-fat', [dairy, fruit, fat], 'A more filling bowl-style option using normal pantry pairings.', dayPart, summary),
         );
       });
+
+      groups.carbs.forEach((carb) => {
+        addUniqueCandidate(
+          candidates,
+          buildCandidate('dairy-fruit-carb', [dairy, fruit, carb], 'A fuller bowl-style option when dairy and fruit need a more substantial base.', dayPart, summary),
+        );
+      });
     });
   });
 
-  groups.carbs.forEach((base) => {
+  groups.bases.forEach((base) => {
     groups.proteins.forEach((protein) => {
       groups.condiments.forEach((condiment) => {
         addUniqueCandidate(
@@ -366,6 +399,15 @@ const generateCandidates = (
       });
   }
 
+  items
+    .filter(isCompleteStandaloneItem)
+    .forEach((item) => {
+      addUniqueCandidate(
+        candidates,
+        buildCandidate('single-complete', [item], 'A complete-enough single-item fallback when one pantry staple can stand on its own.', dayPart, summary),
+      );
+    });
+
   return candidates;
 };
 
@@ -374,7 +416,7 @@ const isRepeatedFromToday = (candidate: Candidate, logNames: string[]) => {
   return logNames.some((name) => name && (joinedName.includes(name) || name.includes(joinedName)));
 };
 
-const getCoherenceBonus = (candidate: Candidate) => {
+const getCoherenceBonus = (candidate: Candidate, pantryItems: PantryItem[]) => {
   const categories = candidate.ingredients.map((item) => inferredCategory(item));
   const roles = candidate.ingredients.map((item) => inferredMealRole(item));
   let bonus = candidate.coherenceScore;
@@ -399,6 +441,34 @@ const getCoherenceBonus = (candidate: Candidate) => {
     bonus += 3;
   }
 
+  if (categories.includes('protein') && categories.includes('vegetable')) {
+    bonus += 2;
+  }
+
+  if (categories.includes('dairy') && categories.includes('fruit') && categories.includes('carb')) {
+    bonus += 5;
+  }
+
+  if (hasDryBaseProteinShape(candidate)) {
+    bonus -= hasCondimentSupport(candidate, pantryItems) ? 7 : 2;
+  }
+
+  if (candidate.pattern === 'base-protein-condiment') {
+    bonus += 5;
+  }
+
+  if (candidate.pattern === 'single-complete') {
+    bonus += candidate.estimatedProtein >= 18 || candidate.estimatedCalories >= 220 ? 3 : -3;
+  }
+
+  if (candidate.ingredients.length === 3 && countCategory(candidate, 'condiment') >= 1 && categories.includes('protein') && hasRole(candidate, 'base')) {
+    bonus += 2;
+  }
+
+  if (candidate.ingredients.length >= 3 && countCategory(candidate, 'condiment') >= 2) {
+    bonus -= 6;
+  }
+
   return bonus;
 };
 
@@ -417,6 +487,10 @@ const filterCandidate = (
   }
 
   if (condimentCount >= candidate.ingredients.length / 2) {
+    return false;
+  }
+
+  if (candidate.pattern === 'single-complete' && candidate.estimatedCalories < 120 && candidate.estimatedProtein < 12) {
     return false;
   }
 
@@ -439,10 +513,27 @@ const filterCandidate = (
   return true;
 };
 
+const getExpiryBonus = (candidate: Candidate, now: Date) =>
+  candidate.ingredients.reduce((sum, item) => {
+    const expiryStatus = getExpiryStatus(item.expires_on, now);
+
+    if (expiryStatus.isToday) {
+      return sum + 12;
+    }
+
+    if (expiryStatus.isSoon && expiryStatus.daysUntil !== null) {
+      return sum + Math.max(4, 10 - expiryStatus.daysUntil * 2);
+    }
+
+    return sum;
+  }, 0);
+
 const scoreCandidate = (
   candidate: Candidate,
+  pantryItems: PantryItem[],
   summary: TodaySummary,
   dayPart: DayPart,
+  now: Date,
   logNames: string[],
   variationSeed: number,
 ) => {
