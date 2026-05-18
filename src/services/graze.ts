@@ -30,6 +30,7 @@ const pantryMetadataDefaults = {
   serving_amount: 1,
   serving_unit: 'serving',
   stock_amount: 0,
+  expires_on: null,
 } as const;
 
 const normalizePantryItem = (item: Partial<PantryItem> | null | undefined): PantryItem | null => {
@@ -45,6 +46,7 @@ const normalizePantryItem = (item: Partial<PantryItem> | null | undefined): Pant
     serving_amount: item.serving_amount ?? pantryMetadataDefaults.serving_amount,
     serving_unit: item.serving_unit ?? pantryMetadataDefaults.serving_unit,
     stock_amount: item.stock_amount ?? pantryMetadataDefaults.stock_amount,
+    expires_on: item.expires_on ?? pantryMetadataDefaults.expires_on,
   } as PantryItem;
 };
 
@@ -176,6 +178,7 @@ export const createPantryItem = async (
     serving_amount: number;
     serving_unit: string;
     stock_amount: number;
+    expires_on: string | null;
     calories_per_serving: number;
     protein_per_serving: number;
     quantity_label: string;
@@ -205,6 +208,7 @@ export const updatePantryItem = async (
     serving_amount: number;
     serving_unit: string;
     stock_amount: number;
+    expires_on: string | null;
     calories_per_serving: number;
     protein_per_serving: number;
     quantity_label: string;

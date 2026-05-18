@@ -1,6 +1,7 @@
 import { useAuth } from '@clerk/clerk-expo';
 import { useEffect, useRef, useState } from 'react';
 
+import { normalizeDateOnly } from '../lib/expiry';
 import { buildDefaultServingLabel, roundInventoryAmount } from '../lib/inventory';
 import { configureSupabaseAccessToken } from '../lib/supabase';
 import {
@@ -91,8 +92,9 @@ const formatPantrySaveError = (saveError: unknown) => {
     normalizedMessage.includes('category')
     || normalizedMessage.includes('effort_level')
     || normalizedMessage.includes('meal_role')
+    || normalizedMessage.includes('expires_on')
   ) {
-    return 'Pantry save failed because the v2 pantry metadata migration has not been run.';
+    return 'Pantry save failed because the pantry metadata or expiry migrations have not been run.';
   }
 
   const detailParts = [message, details, hint ? `Hint: ${hint}` : '', code ? `Code: ${code}` : ''].filter(Boolean);
@@ -144,6 +146,7 @@ const emptyPantryForm = (): PantryFormValues => ({
   stockEntryMode: 'amount',
   stockAmount: '',
   stockServings: '',
+  expiresOn: '',
   caloriesPerServing: '',
   proteinPerServing: '',
   quantityLabel: '',
@@ -343,6 +346,16 @@ export const useGrazeData = () => {
       return;
     }
 
+    const normalizedExpiry = values.expiresOn.trim()
+      ? normalizeDateOnly(values.expiresOn)
+      : null;
+
+    if (values.expiresOn.trim() && !normalizedExpiry) {
+      const invalidError = new Error('Enter expiry as YYYY-MM-DD or leave it blank.');
+      setError(invalidError.message);
+      throw invalidError;
+    }
+
     setSubmitting(true);
     setError(null);
 
@@ -355,6 +368,7 @@ export const useGrazeData = () => {
         values.stockEntryMode === 'amount'
           ? roundInventoryAmount(Number(values.stockAmount))
           : roundInventoryAmount(Number(values.stockServings) * Number(values.servingAmount)),
+      expires_on: normalizedExpiry,
       calories_per_serving: Number(values.caloriesPerServing),
       protein_per_serving: Number(values.proteinPerServing),
       quantity_label: values.quantityLabel.trim() || 'In stock',

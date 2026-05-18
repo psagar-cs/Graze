@@ -31,6 +31,7 @@ export type PantryItem = {
   serving_amount: number;
   serving_unit: PantryUnit;
   stock_amount: number;
+  expires_on: string | null;
   calories_per_serving: number;
   protein_per_serving: number;
   quantity_label: string;
@@ -147,6 +148,7 @@ export type Suggestion = {
   effortLevel: PantryEffortLevel;
   reason: string;
   caveats: string[];
+  expiryWarning?: string | null;
 };
 
 export type SuggestionEngineResult = {
@@ -170,6 +172,7 @@ export type PantryFormValues = {
   stockEntryMode: PantryStockEntryMode;
   stockAmount: string;
   stockServings: string;
+  expiresOn: string;
   caloriesPerServing: string;
   proteinPerServing: string;
   quantityLabel: string;
