@@ -1,6 +1,14 @@
 import { supabase } from '../lib/supabase';
 import { getTodayRange } from '../lib/dates';
-import type { FoodLogEntry, PantryItem, Profile } from '../types';
+import type {
+  CustomMeal,
+  CustomMealIngredient,
+  FoodLogEntry,
+  FoodLogMealItem,
+  FoodLogSource,
+  PantryItem,
+  Profile,
+} from '../types';
 
 const profileDefaults = {
   daily_calorie_target: 3000,
@@ -42,8 +50,67 @@ const normalizePantryItem = (item: Partial<PantryItem> | null | undefined): Pant
 
 const normalizeFoodLogEntry = (entry: FoodLogEntry): FoodLogEntry => ({
   ...entry,
+  log_source: entry.log_source ?? (entry.pantry_item_id ? 'pantry_item' : 'custom'),
+  pantry_amount_used: typeof entry.pantry_amount_used === 'number' ? entry.pantry_amount_used : null,
   pantry_item: normalizePantryItem(entry.pantry_item),
 });
+
+const normalizeCustomMealIngredient = (
+  ingredient: Partial<CustomMealIngredient> | null | undefined,
+): CustomMealIngredient | null => {
+  if (!ingredient) {
+    return null;
+  }
+
+  return {
+    ...ingredient,
+    amount_used: ingredient.amount_used ?? 0,
+    sort_order: ingredient.sort_order ?? 0,
+    pantry_item: normalizePantryItem(ingredient.pantry_item),
+  } as CustomMealIngredient;
+};
+
+const normalizeCustomMeal = (meal: Partial<CustomMeal> | null | undefined): CustomMeal | null => {
+  if (!meal) {
+    return null;
+  }
+
+  const ingredients = (meal.ingredients ?? [])
+    .map((ingredient) => normalizeCustomMealIngredient(ingredient as CustomMealIngredient))
+    .filter(Boolean) as CustomMealIngredient[];
+
+  return {
+    ...meal,
+    ingredients: ingredients.sort((left, right) => left.sort_order - right.sort_order),
+  } as CustomMeal;
+};
+
+const normalizeFoodLogMealItem = (
+  item: Partial<FoodLogMealItem> | null | undefined,
+): FoodLogMealItem | null => {
+  if (!item) {
+    return null;
+  }
+
+  return {
+    ...item,
+    amount_used: item.amount_used ?? 0,
+    calories: item.calories ?? 0,
+    protein: item.protein ?? 0,
+    sort_order: item.sort_order ?? 0,
+    pantry_item: normalizePantryItem(item.pantry_item),
+  } as FoodLogMealItem;
+};
+
+const getCustomMealById = async (mealId: string) => {
+  const { data, error } = await supabase
+    .from('custom_meals')
+    .select('*, ingredients:custom_meal_ingredients(*, pantry_item:pantry_items(*))')
+    .eq('id', mealId)
+    .single<CustomMeal>();
+
+  return normalizeCustomMeal(requireData(data, error)) as CustomMeal;
+};
 
 export const ensureProfile = async (userId: string) => {
   const { data: existing, error: selectError } = await supabase
@@ -208,12 +275,27 @@ export const getTodayLogs = async (userId: string) => {
   return (requireData(data, error) ?? []).map(normalizeFoodLogEntry);
 };
 
+export const getCustomMeals = async (userId: string) => {
+  const { data, error } = await supabase
+    .from('custom_meals')
+    .select('*, ingredients:custom_meal_ingredients(*, pantry_item:pantry_items(*))')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .returns<CustomMeal[]>();
+
+  return (requireData(data, error) ?? [])
+    .map((meal) => normalizeCustomMeal(meal))
+    .filter(Boolean) as CustomMeal[];
+};
+
 export const createFoodLog = async (
   userId: string,
   payload: {
     pantry_item_id: string | null;
     custom_name: string | null;
+    log_source: FoodLogSource;
     servings: number;
+    pantry_amount_used: number | null;
     calories: number;
     protein: number;
     notes: string | null;
@@ -229,4 +311,236 @@ export const createFoodLog = async (
     .single<FoodLogEntry>();
 
   return normalizeFoodLogEntry(requireData(data, error) as FoodLogEntry);
+};
+
+export const createFoodLogMealItems = async (
+  payload: {
+    user_id: string;
+    food_log_id: string;
+    pantry_item_id: string | null;
+    ingredient_name: string;
+    amount_used: number;
+    calories: number;
+    protein: number;
+    sort_order: number;
+  }[],
+) => {
+  const { data, error } = await supabase
+    .from('food_log_meal_items')
+    .insert(payload)
+    .select('*, pantry_item:pantry_items(*)')
+    .returns<FoodLogMealItem[]>();
+
+  return (requireData(data, error) ?? [])
+    .map((item) => normalizeFoodLogMealItem(item))
+    .filter(Boolean) as FoodLogMealItem[];
+};
+
+export const getFoodLogMealItems = async (foodLogId: string) => {
+  const { data, error } = await supabase
+    .from('food_log_meal_items')
+    .select('*, pantry_item:pantry_items(*)')
+    .eq('food_log_id', foodLogId)
+    .order('sort_order', { ascending: true })
+    .returns<FoodLogMealItem[]>();
+
+  return (requireData(data, error) ?? [])
+    .map((item) => normalizeFoodLogMealItem(item))
+    .filter(Boolean) as FoodLogMealItem[];
+};
+
+export const deleteFoodLogMealItems = async (foodLogId: string) => {
+  const { error } = await supabase
+    .from('food_log_meal_items')
+    .delete()
+    .eq('food_log_id', foodLogId);
+
+  if (error) {
+    throw error;
+  }
+};
+
+export const replaceFoodLogMealItems = async (
+  foodLogId: string,
+  payload: {
+    user_id: string;
+    pantry_item_id: string | null;
+    ingredient_name: string;
+    amount_used: number;
+    calories: number;
+    protein: number;
+    sort_order: number;
+  }[],
+) => {
+  await deleteFoodLogMealItems(foodLogId);
+
+  if (!payload.length) {
+    return [] as FoodLogMealItem[];
+  }
+
+  return createFoodLogMealItems(
+    payload.map((item) => ({
+      ...item,
+      food_log_id: foodLogId,
+    })),
+  );
+};
+
+export const createCustomMeal = async (
+  userId: string,
+  payload: {
+    name: string;
+    ingredients: {
+      pantry_item_id: string;
+      amount_used: number;
+      sort_order: number;
+    }[];
+  },
+) => {
+  const { data: createdMeal, error: mealError } = await supabase
+    .from('custom_meals')
+    .insert({
+      user_id: userId,
+      name: payload.name,
+    })
+    .select('*')
+    .single<CustomMeal>();
+
+  const savedMeal = requireData(createdMeal, mealError);
+
+  if (!savedMeal) {
+    throw new Error('Unable to create custom meal.');
+  }
+
+  if (payload.ingredients.length) {
+    const { error: ingredientsError } = await supabase
+      .from('custom_meal_ingredients')
+      .insert(
+        payload.ingredients.map((ingredient) => ({
+          user_id: userId,
+          custom_meal_id: savedMeal.id,
+          ...ingredient,
+        })),
+      );
+
+    if (ingredientsError) {
+      await supabase.from('custom_meals').delete().eq('id', savedMeal.id);
+      throw ingredientsError;
+    }
+  }
+
+  return getCustomMealById(savedMeal.id);
+};
+
+export const updateCustomMeal = async (
+  mealId: string,
+  userId: string,
+  payload: {
+    name: string;
+    ingredients: {
+      pantry_item_id: string;
+      amount_used: number;
+      sort_order: number;
+    }[];
+  },
+) => {
+  const { error: mealError } = await supabase
+    .from('custom_meals')
+    .update({
+      name: payload.name,
+    })
+    .eq('id', mealId);
+
+  if (mealError) {
+    throw mealError;
+  }
+
+  const { error: deleteError } = await supabase
+    .from('custom_meal_ingredients')
+    .delete()
+    .eq('custom_meal_id', mealId);
+
+  if (deleteError) {
+    throw deleteError;
+  }
+
+  if (payload.ingredients.length) {
+    const { error: ingredientsError } = await supabase
+      .from('custom_meal_ingredients')
+      .insert(
+        payload.ingredients.map((ingredient) => ({
+          user_id: userId,
+          custom_meal_id: mealId,
+          ...ingredient,
+        })),
+      );
+
+    if (ingredientsError) {
+      throw ingredientsError;
+    }
+  }
+
+  return getCustomMealById(mealId);
+};
+
+export const deleteCustomMeal = async (mealId: string) => {
+  const { error } = await supabase
+    .from('custom_meals')
+    .delete()
+    .eq('id', mealId);
+
+  if (error) {
+    throw error;
+  }
+};
+
+export const updateFoodLog = async (
+  entryId: string,
+  payload: {
+    custom_name: string | null;
+    servings: number;
+    pantry_amount_used: number | null;
+    calories: number;
+    protein: number;
+    notes: string | null;
+  },
+) => {
+  const { data, error } = await supabase
+    .from('food_logs')
+    .update(payload)
+    .eq('id', entryId)
+    .select('*, pantry_item:pantry_items(*)')
+    .single<FoodLogEntry>();
+
+  return normalizeFoodLogEntry(requireData(data, error) as FoodLogEntry);
+};
+
+export const updateGroupedFoodLog = async (
+  entryId: string,
+  payload: {
+    custom_name: string | null;
+    servings: number;
+    calories: number;
+    protein: number;
+  },
+) => {
+  const { data, error } = await supabase
+    .from('food_logs')
+    .update(payload)
+    .eq('id', entryId)
+    .select('*, pantry_item:pantry_items(*)')
+    .single<FoodLogEntry>();
+
+  return normalizeFoodLogEntry(requireData(data, error) as FoodLogEntry);
+};
+
+export const deleteFoodLog = async (entryId: string) => {
+  const { error } = await supabase
+    .from('food_logs')
+    .delete()
+    .eq('id', entryId);
+
+  if (error) {
+    throw error;
+  }
 };

@@ -21,6 +21,7 @@ export type PantryEffortLevel = 'no_prep' | 'assemble' | 'microwave' | 'cook';
 export type PantryMealRole = 'main' | 'base' | 'topping' | 'condiment' | 'snack';
 export type PantryUnit = 'serving' | 'cup' | 'tbsp' | 'tsp' | 'piece' | 'can' | 'gram' | 'ounce' | 'pound';
 export type PantryStockEntryMode = 'amount' | 'servings';
+export type FoodLogSource = 'pantry_item' | 'custom' | 'suggested_grouped' | 'custom_meal_grouped';
 
 export type PantryItem = {
   id: string;
@@ -47,13 +48,61 @@ export type FoodLogEntry = {
   logged_at: string;
   pantry_item_id: string | null;
   custom_name: string | null;
+  log_source: FoodLogSource;
   servings: number;
+  pantry_amount_used: number | null;
   calories: number;
   protein: number;
   notes: string | null;
   created_at: string;
   updated_at: string;
   pantry_item?: PantryItem | null;
+};
+
+export type CustomMealIngredient = {
+  id: string;
+  user_id: string;
+  custom_meal_id: string;
+  pantry_item_id: string;
+  amount_used: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  pantry_item?: PantryItem | null;
+};
+
+export type CustomMeal = {
+  id: string;
+  user_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  ingredients: CustomMealIngredient[];
+};
+
+export type FoodLogMealItem = {
+  id: string;
+  user_id: string;
+  food_log_id: string;
+  pantry_item_id: string | null;
+  ingredient_name: string;
+  amount_used: number;
+  calories: number;
+  protein: number;
+  sort_order: number;
+  created_at: string;
+  pantry_item?: PantryItem | null;
+};
+
+export type GroupedFoodLogIngredientFormValue = {
+  pantryItemId: string | null;
+  amountUsedPerServing: string;
+};
+
+export type GroupedFoodLogFormValues = {
+  title: string;
+  mealServings: string;
+  ingredients: GroupedFoodLogIngredientFormValue[];
 };
 
 export type TodaySummary = {
