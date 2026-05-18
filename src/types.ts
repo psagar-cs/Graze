@@ -138,6 +138,7 @@ export type SuggestionIngredient = {
 
 export type Suggestion = {
   id: string;
+  canonicalKey: string;
   title: string;
   description: string;
   ingredients: string[];

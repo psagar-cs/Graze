@@ -26,16 +26,20 @@ type SuggestionContext = {
 };
 
 type CandidatePattern =
-  | 'protein-carb'
+  | 'base-protein'
   | 'protein-fruit'
+  | 'protein-vegetable'
   | 'dairy-fruit'
   | 'dairy-fruit-fat'
+  | 'dairy-fruit-carb'
   | 'base-protein-condiment'
   | 'snack-protein'
+  | 'single-complete'
   | 'late-night';
 
 type Candidate = {
   id: string;
+  canonicalKey: string;
   title: string;
   description: string;
   ingredients: PantryItem[];
@@ -106,6 +110,12 @@ const addUniqueCandidate = (candidates: Candidate[], candidate: Candidate) => {
 };
 
 const normalizeName = (value: string) => value.trim().toLowerCase();
+
+const buildCanonicalIngredientKey = (items: PantryItem[]) =>
+  items
+    .map((item) => item.id)
+    .sort()
+    .join('|');
 
 const inferredCategory = (item: PantryItem) => {
   if (item.category !== 'other') {
@@ -239,10 +249,12 @@ const buildCandidate = (
   const estimatedCalories = items.reduce((sum, item) => sum + item.calories_per_serving, 0);
   const estimatedProtein = items.reduce((sum, item) => sum + item.protein_per_serving, 0);
   const ingredientNames = items.map((item) => item.name);
+  const canonicalKey = buildCanonicalIngredientKey(items);
   const title = ingredientNames.join(' + ');
 
   return {
-    id: `${pattern}:${ingredientNames.map(normalizeName).sort().join('|')}`,
+    id: `${pattern}:${canonicalKey}`,
+    canonicalKey,
     title,
     description,
     ingredients: items,
@@ -300,13 +312,84 @@ const classifyItems = (items: PantryItem[]) => {
       case 'fat':
         groups.fats.push(item);
         break;
+      case 'vegetable':
+        groups.vegetables.push(item);
+        break;
       default:
         groups.other.push(item);
+    }
+
+    if (role === 'base') {
+      groups.bases.push(item);
+    }
+
+    if (role === 'topping') {
+      groups.toppings.push(item);
     }
   });
 
   return groups;
 };
+
+const isCompleteStandaloneItem = (item: PantryItem) => {
+  const category = inferredCategory(item);
+  const role = inferredMealRole(item);
+  const effort = inferredEffort(item);
+
+  if (role === 'condiment') {
+    return false;
+  }
+
+  if (category === 'condiment' || category === 'fat') {
+    return false;
+  }
+
+  if (effortRank[effort] > effortRank.microwave) {
+    return false;
+  }
+
+  return (
+    item.protein_per_serving >= 15
+    || (item.calories_per_serving >= 180 && category !== 'fruit')
+    || category === 'dairy'
+    || category === 'snack'
+  );
+};
+
+const hasCategory = (candidate: Candidate, category: PantryCategory) =>
+  candidate.ingredients.some((item) => inferredCategory(item) === category);
+
+const hasRole = (candidate: Candidate, role: PantryMealRole) =>
+  candidate.ingredients.some((item) => inferredMealRole(item) === role);
+
+const countCategory = (candidate: Candidate, category: PantryCategory) =>
+  candidate.ingredients.filter((item) => inferredCategory(item) === category).length;
+
+const hasDryBaseProteinShape = (candidate: Candidate) => {
+  if (candidate.ingredients.length !== 2) {
+    return false;
+  }
+
+  if (!hasRole(candidate, 'base')) {
+    return false;
+  }
+
+  if (!hasCategory(candidate, 'protein')) {
+    return false;
+  }
+
+  return !hasCategory(candidate, 'condiment')
+    && !hasCategory(candidate, 'fat')
+    && !hasCategory(candidate, 'fruit')
+    && !hasCategory(candidate, 'vegetable')
+    && !hasRole(candidate, 'topping');
+};
+
+const hasCondimentSupport = (candidate: Candidate, pantryItems: PantryItem[]) =>
+  hasDryBaseProteinShape(candidate)
+  && pantryItems.some((item) =>
+    !candidate.ingredients.some((candidateItem) => candidateItem.id === item.id)
+    && inferredCategory(item) === 'condiment');
 
 const generateCandidates = (
   items: PantryItem[],
@@ -317,10 +400,10 @@ const generateCandidates = (
   const groups = classifyItems(items);
 
   groups.proteins.forEach((protein) => {
-    groups.carbs.forEach((carb) => {
+    groups.bases.forEach((base) => {
       addUniqueCandidate(
         candidates,
-        buildCandidate('protein-carb', [protein, carb], 'A simple protein-and-carb combo built from pantry staples.', dayPart, summary),
+        buildCandidate('base-protein', [base, protein], 'A base-and-protein pairing that can work as a simple meal when the pantry is sparse.', dayPart, summary),
       );
     });
 
@@ -541,32 +624,126 @@ const scoreCandidate = (
   const proteinTarget = summary.remainingProtein || 20;
   const calorieDistance = Math.abs(candidate.estimatedCalories - calorieTarget) / Math.max(calorieTarget, 250);
   const proteinDistance = Math.abs(candidate.estimatedProtein - proteinTarget) / Math.max(proteinTarget, 15);
-  const repeatedPenalty = isRepeatedFromToday(candidate, logNames) ? 12 : 0;
-  const lowEffortBonus = 10 - effortRank[candidate.effortLevel] * 3;
+  const repeatedPenalty = isRepeatedFromToday(candidate, logNames) ? 18 : 0;
+  const lowEffortBonus = 12 - effortRank[candidate.effortLevel] * 4;
   const timeBonus =
     dayPart === 'late-night'
-      ? candidate.effortLevel === 'no_prep' || candidate.effortLevel === 'assemble'
-        ? 8
-        : -4
+      ? candidate.effortLevel === 'no_prep'
+        ? 10
+        : candidate.effortLevel === 'assemble'
+          ? 5
+          : -7
       : dayPart === 'morning'
-        ? candidate.estimatedPrepTimeMinutes <= 5
-          ? 6
-          : -2
-        : 0;
-  const varietyBonus = new Set(candidate.ingredients.map((item) => inferredCategory(item))).size * 2;
+        ? candidate.effortLevel === 'no_prep' || candidate.effortLevel === 'assemble'
+          ? 7
+          : -4
+        : dayPart === 'midday'
+          ? candidate.effortLevel === 'cook'
+            ? -3
+            : 2
+          : candidate.effortLevel === 'cook'
+            ? -1
+            : 1;
+  const varietyBonus = new Set(candidate.ingredients.map((item) => inferredCategory(item))).size * 3;
+  const expiryBonus = getExpiryBonus(candidate, now);
   const seedBonus = ((variationSeed + candidate.id.length) % 5) - 2;
+  const efficiencyPenalty =
+    candidate.ingredients.length >= 3 && candidate.estimatedProtein < 16 && candidate.estimatedCalories < 260
+      ? 5
+      : 0;
 
   return (
     100
     - calorieDistance * 18
     - proteinDistance * 24
-    + getCoherenceBonus(candidate)
+    + getCoherenceBonus(candidate, pantryItems)
     + lowEffortBonus
     + timeBonus
     + varietyBonus
+    + expiryBonus
     + seedBonus
+    - efficiencyPenalty
     - repeatedPenalty
   );
+};
+
+const countSharedIngredients = (left: Candidate, right: Candidate) =>
+  left.ingredients.filter((item) => right.ingredients.some((other) => other.id === item.id)).length;
+
+const isNearDuplicateCandidate = (left: Candidate, right: Candidate) => {
+  if (left.canonicalKey === right.canonicalKey) {
+    return true;
+  }
+
+  const sharedIngredients = countSharedIngredients(left, right);
+
+  if (sharedIngredients >= 2) {
+    return true;
+  }
+
+  const leftHasBase = hasRole(left, 'base');
+  const rightHasBase = hasRole(right, 'base');
+  const leftHasProtein = hasCategory(left, 'protein');
+  const rightHasProtein = hasCategory(right, 'protein');
+
+  return leftHasBase && rightHasBase && leftHasProtein && rightHasProtein && sharedIngredients >= 1;
+};
+
+const pickTopDistinctCandidates = (
+  ranked: { candidate: Candidate; score: number }[],
+  limit: number,
+) => {
+  const chosen: { candidate: Candidate; score: number }[] = [];
+  const leftovers: { candidate: Candidate; score: number }[] = [];
+
+  ranked.forEach((entry) => {
+    if (chosen.length < limit && !chosen.some((picked) => isNearDuplicateCandidate(picked.candidate, entry.candidate))) {
+      chosen.push(entry);
+      return;
+    }
+
+    leftovers.push(entry);
+  });
+
+  for (const entry of leftovers) {
+    if (chosen.length >= limit) {
+      break;
+    }
+
+    chosen.push(entry);
+  }
+
+  return chosen;
+};
+
+const buildExpiryWarning = (items: PantryItem[], now: Date) => {
+  const soonItems = items
+    .map((item) => ({
+      item,
+      expiryStatus: getExpiryStatus(item.expires_on, now),
+    }))
+    .filter(({ expiryStatus }) => expiryStatus.isToday || expiryStatus.isSoon);
+
+  if (!soonItems.length) {
+    return null;
+  }
+
+  if (soonItems.length === 1) {
+    const [{ item, expiryStatus }] = soonItems;
+    const detail = expiryStatus.isToday
+      ? 'expires today'
+      : expiryStatus.daysUntil === 1
+        ? 'expires in 1 day'
+        : `expires in ${expiryStatus.daysUntil} days`;
+
+    return `Use soon: ${item.name} ${detail}.`;
+  }
+
+  if (soonItems.length === 2) {
+    return `Use soon: ${soonItems[0].item.name} and ${soonItems[1].item.name} expire soon.`;
+  }
+
+  return `Use soon: ${soonItems.length} ingredients expire soon.`;
 };
 
 export const getSuggestions = ({
@@ -602,6 +779,7 @@ export const getSuggestions = ({
   }
 
   const stockedPantryItems = pantryItems.filter(hasAtLeastOneServingInStock);
+  const suggestionEligibleItems = stockedPantryItems.filter((item) => !getExpiryStatus(item.expires_on, now).isExpired);
 
   if (!stockedPantryItems.length) {
     return {
@@ -614,55 +792,76 @@ export const getSuggestions = ({
     };
   }
 
+  if (!suggestionEligibleItems.length) {
+    return {
+      suggestions: [],
+      caveats: ['Expired pantry items stay visible in Pantry, but suggestions skip them until you update or clear the date.'],
+      emptyState: {
+        title: 'Only expired stocked items left',
+        description: 'Your stocked pantry items all have expiry dates in the past, so Graze is holding them out of suggestions for now.',
+      },
+    };
+  }
+
   const dayPart = getDayPart(now);
   const logNames = getLogNames(todayLogs);
-  const candidates = generateCandidates(stockedPantryItems, dayPart, todaySummary);
+  const candidates = generateCandidates(suggestionEligibleItems, dayPart, todaySummary);
   const lowEffortAvailable = candidates.some((candidate) => effortRank[candidate.effortLevel] <= effortRank.assemble);
   const metadataCaveats: string[] = [];
 
-  if (stockedPantryItems.every((item) => item.category === 'other')) {
+  if (suggestionEligibleItems.every((item) => item.category === 'other')) {
     metadataCaveats.push('Suggestion quality improves once pantry items are tagged with categories.');
   }
 
-  if (stockedPantryItems.every((item) => item.meal_role === 'main')) {
+  if (suggestionEligibleItems.every((item) => item.meal_role === 'main')) {
     metadataCaveats.push('Meal roles help Graze tell real meal bases from toppings and condiments.');
   }
 
+  if (stockedPantryItems.length !== suggestionEligibleItems.length) {
+    metadataCaveats.push('Expired pantry items are skipped when Graze builds suggestions.');
+  }
+
   const rankedSuggestions = candidates
-    .filter((candidate) => !excludedSuggestionIds.includes(candidate.id))
+    .filter((candidate) => !excludedSuggestionIds.includes(candidate.id) && !excludedSuggestionIds.includes(candidate.canonicalKey))
     .filter((candidate) => filterCandidate(candidate, todaySummary, goal, lowEffortAvailable))
     .map((candidate) => ({
       candidate,
-      score: scoreCandidate(candidate, todaySummary, dayPart, logNames, variationSeed),
+      score: scoreCandidate(candidate, suggestionEligibleItems, todaySummary, dayPart, now, logNames, variationSeed),
     }))
     .sort((left, right) => right.score - left.score)
     .filter(
       (entry, index, list) =>
-        list.findIndex((candidate) => candidate.candidate.title === entry.candidate.title) === index,
-    )
-    .slice(0, 3)
-    .map(({ candidate }): Suggestion => ({
-      id: candidate.id,
-      title: candidate.title,
-      description: candidate.description,
-      ingredients: candidate.ingredients.map((item) => item.name),
-      ingredientDetails: candidate.ingredients.map((item) => ({
-        pantryItemId: item.id,
-        name: item.name,
-        servingAmount: item.serving_amount,
-        servingUnit: item.serving_unit,
-        stockAmountRequired: item.serving_amount,
-        displayServing: buildDefaultServingLabel(item.serving_amount, item.serving_unit),
-      })),
-      estimatedCalories: candidate.estimatedCalories,
-      estimatedProtein: candidate.estimatedProtein,
-      estimatedPrepTimeMinutes: candidate.estimatedPrepTimeMinutes,
-      effortLevel: candidate.effortLevel,
-      reason: candidate.reason,
-      caveats: [...candidate.caveats, ...metadataCaveats],
-    }));
+        list.findIndex((candidate) => candidate.candidate.canonicalKey === entry.candidate.canonicalKey) === index,
+    );
+  const shortlistedCandidates = pickTopDistinctCandidates(rankedSuggestions, 3);
 
-  if (!rankedSuggestions.length) {
+  const finalSuggestions = shortlistedCandidates
+    .map(({ candidate }): Suggestion => {
+      return {
+        id: candidate.id,
+        canonicalKey: candidate.canonicalKey,
+        title: candidate.title,
+        description: candidate.description,
+        ingredients: candidate.ingredients.map((item) => item.name),
+        ingredientDetails: candidate.ingredients.map((item) => ({
+          pantryItemId: item.id,
+          name: item.name,
+          servingAmount: item.serving_amount,
+          servingUnit: item.serving_unit,
+          stockAmountRequired: item.serving_amount,
+          displayServing: buildDefaultServingLabel(item.serving_amount, item.serving_unit),
+        })),
+        estimatedCalories: candidate.estimatedCalories,
+        estimatedProtein: candidate.estimatedProtein,
+        estimatedPrepTimeMinutes: candidate.estimatedPrepTimeMinutes,
+        effortLevel: candidate.effortLevel,
+        reason: candidate.reason,
+        caveats: [...candidate.caveats, ...metadataCaveats],
+        expiryWarning: buildExpiryWarning(candidate.ingredients, now),
+      };
+    });
+
+  if (!finalSuggestions.length) {
     return {
       suggestions: [],
       caveats: metadataCaveats,
@@ -674,7 +873,7 @@ export const getSuggestions = ({
   }
 
   return {
-    suggestions: rankedSuggestions,
+    suggestions: finalSuggestions,
     caveats: metadataCaveats,
   };
 };

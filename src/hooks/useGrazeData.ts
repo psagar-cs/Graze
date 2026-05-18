@@ -202,6 +202,16 @@ const syncPantryItemInMeals = (meals: CustomMeal[], updatedItem: PantryItem) =>
         : ingredient),
   }));
 
+const buildCustomMealCanonicalKey = (
+  ingredients: {
+    pantry_item_id: string;
+  }[],
+) =>
+  ingredients
+    .map((ingredient) => ingredient.pantry_item_id)
+    .sort()
+    .join('|');
+
 export const useGrazeData = () => {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -681,6 +691,29 @@ export const useGrazeData = () => {
     }
   };
 
+  const saveSuggestionAsCustomMeal = async (suggestion: Suggestion) => {
+    if (!userId) {
+      return null;
+    }
+
+    const meal = {
+      name: suggestion.title,
+      ingredients: suggestion.ingredientDetails.map((ingredient, index) => ({
+        pantry_item_id: ingredient.pantryItemId,
+        amount_used: ingredient.stockAmountRequired,
+        sort_order: index,
+      })),
+    };
+
+    const mealCanonicalKey = buildCustomMealCanonicalKey(meal.ingredients);
+
+    if (customMeals.some((existingMeal) => buildCustomMealCanonicalKey(existingMeal.ingredients) === mealCanonicalKey)) {
+      throw new Error('That meal is already in your saved meals.');
+    }
+
+    return saveCustomMeal(meal);
+  };
+
   const removeCustomMeal = async (meal: CustomMeal) => {
     setSubmitting(true);
     setError(null);
@@ -1055,6 +1088,7 @@ export const useGrazeData = () => {
     removeCustomMeal,
     saveFoodLog,
     saveCustomMeal,
+    saveSuggestionAsCustomMeal,
     saveSuggestedMealLog,
     savePantryItem,
     saveTargets,

@@ -179,6 +179,48 @@ const summarizeCustomMeal = (meal: CustomMeal) => {
   };
 };
 
+const buildCustomMealCanonicalKey = (meal: CustomMeal) =>
+  meal.ingredients
+    .map((ingredient) => ingredient.pantry_item_id)
+    .sort()
+    .join('|');
+
+const getCustomMealAvailability = (meal: CustomMeal, pantryItems: PantryItem[]) => {
+  let unavailableReason: string | null = null;
+  let hasArchivedIngredients = false;
+
+  meal.ingredients.forEach((ingredient) => {
+    const pantryItem = ingredient.pantry_item ?? pantryItems.find((item) => item.id === ingredient.pantry_item_id) ?? null;
+
+    if (!pantryItem) {
+      if (!unavailableReason) {
+        unavailableReason = `Missing ${ingredient.pantry_item?.name ?? 'ingredient'}.`;
+      }
+      return;
+    }
+
+    if (!pantryItem.is_active) {
+      hasArchivedIngredients = true;
+      if (!unavailableReason) {
+        unavailableReason = `${pantryItem.name} is archived.`;
+      }
+      return;
+    }
+
+    if (ingredient.amount_used - pantryItem.stock_amount > 0.0001) {
+      if (!unavailableReason) {
+        unavailableReason = `Not enough ${pantryItem.name}.`;
+      }
+    }
+  });
+
+  return {
+    isAvailable: unavailableReason === null,
+    unavailableReason,
+    hasArchivedIngredients,
+  };
+};
+
 export function HomeScreen() {
   const { signOut } = useAuth();
   const { user } = useUser();
@@ -200,6 +242,7 @@ export function HomeScreen() {
     removeCustomMeal,
     saveFoodLog,
     saveCustomMeal,
+    saveSuggestionAsCustomMeal,
     savePantryItem,
     saveSuggestedMealLog,
     saveTargets,
@@ -309,6 +352,7 @@ export function HomeScreen() {
     excludedSuggestionIds: dismissedSuggestionIds,
     variationSeed: suggestionSeed,
   });
+  const savedMealCanonicalKeys = new Set(customMeals.map((meal) => buildCustomMealCanonicalKey(meal)));
 
   useEffect(() => {
     setDismissedSuggestionIds([]);
@@ -730,7 +774,7 @@ export function HomeScreen() {
   };
 
   const suggestAgain = () => {
-    const currentIds = suggestionResult.suggestions.map((suggestion) => suggestion.id);
+    const currentIds = suggestionResult.suggestions.map((suggestion) => suggestion.canonicalKey);
     const nextExcludedIds = Array.from(new Set([...dismissedSuggestionIds, ...currentIds]));
     const nextSeed = suggestionSeed + 1;
     const nextResult = getSuggestions({
@@ -773,6 +817,10 @@ export function HomeScreen() {
       mealServings: '1',
     });
     setSuggestionLogOpen(true);
+  };
+
+  const saveSuggestionMeal = async (suggestion: Suggestion) => {
+    await saveSuggestionAsCustomMeal(suggestion);
   };
 
   const submitSuggestionLog = async () => {
@@ -995,26 +1043,32 @@ export function HomeScreen() {
           <View className="gap-3">
             {customMeals.map((meal) => {
               const summary = summarizeCustomMeal(meal);
+              const availability = getCustomMealAvailability(meal, pantryItems);
 
               return (
-                <View className="rounded-2xl border border-moss/10 bg-oat px-4 py-4" key={meal.id}>
+                <View
+                  className={`rounded-2xl border border-moss/10 px-4 py-4 ${availability.isAvailable ? 'bg-oat' : 'bg-oat/70 opacity-75'}`}
+                  key={meal.id}
+                >
                   <View className="flex-row items-start justify-between gap-4">
                     <View className="flex-1">
                       <Text className="text-base font-semibold text-ink">{meal.name}</Text>
                       <Text className="mt-1 text-sm text-ink/60">
                         {summary.ingredientCount} ingredient(s) • {formatCalories(summary.calories)} • {formatProtein(summary.protein)}
                       </Text>
-                      {summary.hasProblem ? (
+                      {!availability.isAvailable ? (
                         <Text className="mt-2 text-sm text-clay">
-                          {summary.hasArchivedIngredients
-                            ? 'This meal includes archived pantry items. Edit it before logging again.'
-                            : 'Some ingredients are missing. Edit this meal before logging again.'}
+                          {availability.hasArchivedIngredients
+                            ? `${availability.unavailableReason} Edit it before logging again.`
+                            : `${availability.unavailableReason} Restock or edit it before logging again.`}
                         </Text>
+                      ) : summary.hasProblem ? (
+                        <Text className="mt-2 text-sm text-clay">Some ingredients are missing. Edit this meal before logging again.</Text>
                       ) : null}
                     </View>
                     <View className="w-28 gap-2">
                       <PrimaryButton
-                        disabled={summary.hasProblem}
+                        disabled={!availability.isAvailable}
                         label="Log"
                         onPress={() => openCustomMealLog(meal)}
                       />
@@ -1197,13 +1251,23 @@ export function HomeScreen() {
                   onPress={() => openSuggestionLog(suggestion)}
                 />
               </View>
+              <View className="flex-1">
+                <PrimaryButton
+                  disabled={submitting || savedMealCanonicalKeys.has(suggestion.canonicalKey)}
+                  label={savedMealCanonicalKeys.has(suggestion.canonicalKey) ? 'Saved' : 'Save meal'}
+                  onPress={() => {
+                    void saveSuggestionMeal(suggestion);
+                  }}
+                  variant={savedMealCanonicalKeys.has(suggestion.canonicalKey) ? 'outline' : 'secondary'}
+                />
+              </View>
             </View>
             <View className="flex-row gap-3">
               <View className="flex-1">
                 <PrimaryButton
                   label="Not feeling it"
                   onPress={() =>
-                    setDismissedSuggestionIds((current) => Array.from(new Set([...current, suggestion.id])))
+                    setDismissedSuggestionIds((current) => Array.from(new Set([...current, suggestion.canonicalKey])))
                   }
                   variant="ghost"
                 />
