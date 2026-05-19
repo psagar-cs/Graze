@@ -326,6 +326,7 @@ export function HomeScreen() {
     removeFoodLog,
     removeGroupedFoodLog,
     removeCustomMeal,
+    removePantryItem,
     saveFoodLog,
     saveCustomMeal,
     saveSuggestionAsCustomMeal,
@@ -370,6 +371,9 @@ export function HomeScreen() {
     suggestionId: '',
     mealServings: '1',
   });
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [guideFocus, setGuideFocus] = useState<GuideSectionKey>('overview');
+  const [pendingDeletePantryItem, setPendingDeletePantryItem] = useState<PantryItem | null>(null);
   const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<string[]>([]);
   const [suggestionSeed, setSuggestionSeed] = useState(0);
   const [suggestionPriority, setSuggestionPriority] = useState<SuggestionPriority>('balanced');
@@ -441,6 +445,10 @@ export function HomeScreen() {
     variationSeed: suggestionSeed,
   });
   const savedMealCanonicalKeys = new Set(customMeals.map((meal) => buildCustomMealCanonicalKey(meal)));
+  const pendingDeletePantryMealCount = pendingDeletePantryItem
+    ? customMeals.filter((meal) => meal.ingredients.some((ingredient) => ingredient.pantry_item_id === pendingDeletePantryItem.id)).length
+    : 0;
+  const focusedGuideSection = guideSectionContent[guideFocus];
 
   useEffect(() => {
     setDismissedSuggestionIds([]);
@@ -528,6 +536,17 @@ export function HomeScreen() {
     setPantryModalOpen(false);
     setEditingItem(null);
     setPantryForm(emptyPantryForm());
+  };
+
+  const confirmDeletePantry = async () => {
+    if (!pendingDeletePantryItem) {
+      return;
+    }
+
+    try {
+      await removePantryItem(pendingDeletePantryItem);
+      setPendingDeletePantryItem(null);
+    } catch {}
   };
 
   const startLogFromPantry = (item: PantryItem) => {
@@ -1254,6 +1273,11 @@ export function HomeScreen() {
                         onPress={() => togglePantryItem(item)}
                         variant={item.is_active ? 'danger' : 'secondary'}
                       />
+                      <PrimaryButton
+                        label="Delete"
+                        onPress={() => setPendingDeletePantryItem(item)}
+                        variant="ghost"
+                      />
                     </View>
                   </View>
                 </View>
@@ -1607,6 +1631,42 @@ export function HomeScreen() {
             onPress={submitPantry}
           />
         </SheetStack>
+      </ModalSheet>
+
+      <ModalSheet
+        onClose={() => setPendingDeletePantryItem(null)}
+        open={Boolean(pendingDeletePantryItem)}
+        title="Delete pantry item"
+      >
+        {pendingDeletePantryItem ? (
+          <SheetStack>
+            <SheetSurface className="rounded-2xl bg-white px-4 py-4">
+              <Text className="text-base font-semibold text-ink">{pendingDeletePantryItem.name}</Text>
+              <Text className="mt-2 text-sm leading-5 text-ink/70">
+                Deleting this item will permanently remove it from Pantry. Past food logs will keep the item name for history.
+              </Text>
+            </SheetSurface>
+            <View className="gap-2 rounded-2xl bg-oat px-4 py-4">
+              <Text className="text-sm leading-5 text-clay">
+                {pendingDeletePantryMealCount
+                  ? `${pendingDeletePantryMealCount} saved meal${pendingDeletePantryMealCount === 1 ? '' : 's'} using this ingredient will also be deleted.`
+                  : 'Saved meals are unaffected because none currently use this ingredient.'}
+              </Text>
+              <Text className="text-sm leading-5 text-ink/65">
+                If you only want to hide this item from suggestions and quick logging, archiving it is the safer option.
+              </Text>
+            </View>
+            <PrimaryButton
+              disabled={submitting}
+              label={submitting ? 'Deleting...' : 'Delete item'}
+              onPress={() => {
+                void confirmDeletePantry();
+              }}
+              variant="danger"
+            />
+            <PrimaryButton label="Keep item" onPress={() => setPendingDeletePantryItem(null)} variant="ghost" />
+          </SheetStack>
+        ) : null}
       </ModalSheet>
 
       <ModalSheet

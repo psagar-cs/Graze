@@ -10,6 +10,7 @@ import {
   createFoodLog,
   createFoodLogMealItems,
   createPantryItem,
+  deletePantryItem,
   deleteCustomMeal,
   deleteFoodLog,
   deleteFoodLogMealItems,
@@ -19,6 +20,7 @@ import {
   getPantryItems,
   getTodayLogs,
   replaceFoodLogMealItems,
+  snapshotPantryItemNamesInFoodLogs,
   updateCustomMeal,
   updateFoodLog,
   updateGroupedFoodLog,
@@ -456,6 +458,45 @@ export const useGrazeData = () => {
     }
   };
 
+  const removePantryItem = async (item: PantryItem) => {
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const affectedMealIds = customMeals
+        .filter((meal) => meal.ingredients.some((ingredient) => ingredient.pantry_item_id === item.id))
+        .map((meal) => meal.id);
+
+      for (const mealId of affectedMealIds) {
+        await deleteCustomMeal(mealId);
+      }
+
+      await snapshotPantryItemNamesInFoodLogs(item.id, item.name);
+      await deletePantryItem(item.id);
+
+      setPantryItems((current) => current.filter((entry) => entry.id !== item.id));
+      setCustomMeals((current) => current.filter((meal) => !affectedMealIds.includes(meal.id)));
+      setTodayLogs((current) =>
+        current.map((entry) =>
+          entry.pantry_item_id === item.id
+            ? {
+                ...entry,
+                pantry_item_id: null,
+                pantry_item: null,
+                custom_name: entry.custom_name ?? item.name,
+              }
+            : entry,
+        ),
+      );
+    } catch (deleteError) {
+      const message = deleteError instanceof Error ? deleteError.message : 'Unable to delete pantry item.';
+      setError(message);
+      throw deleteError;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const saveFoodLog = async (values: FoodLogFormValues) => {
     if (!userId) {
       return;
@@ -490,7 +531,7 @@ export const useGrazeData = () => {
 
       const savedEntry = await createFoodLog(userId, {
         pantry_item_id: values.pantryItemId,
-        custom_name: values.pantryItemId ? null : values.customName.trim(),
+        custom_name: values.pantryItemId ? nextPantryItem?.name ?? values.customName.trim() : values.customName.trim(),
         log_source: values.pantryItemId ? 'pantry_item' : 'custom',
         servings: Number(values.servings),
         pantry_amount_used: values.pantryItemId ? roundInventoryAmount(amountUsed) : null,
@@ -1010,7 +1051,7 @@ export const useGrazeData = () => {
       }
 
       const savedEntry = await updateFoodLog(entry.id, {
-        custom_name: entry.pantry_item_id ? null : values.customName.trim(),
+        custom_name: entry.pantry_item_id ? entry.pantry_item?.name ?? entry.custom_name ?? values.customName.trim() : values.customName.trim(),
         servings: nextServings,
         pantry_amount_used: nextPantryAmountUsed,
         calories: nextCalories,
@@ -1096,6 +1137,7 @@ export const useGrazeData = () => {
     todayLogs,
     todaySummary: buildTodaySummary(profile, todayLogs),
     clearPantryStock,
+    removePantryItem,
     togglePantryItem,
     emptyFoodLogForm,
     emptyPantryForm,

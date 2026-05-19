@@ -238,6 +238,30 @@ export const archivePantryItem = async (itemId: string, isActive: boolean) => {
   return normalizePantryItem(requireData(data, error)) as PantryItem;
 };
 
+export const snapshotPantryItemNamesInFoodLogs = async (itemId: string, itemName: string) => {
+  const { error } = await supabase
+    .from('food_logs')
+    .update({
+      custom_name: itemName,
+    })
+    .eq('pantry_item_id', itemId);
+
+  if (error) {
+    throw error;
+  }
+};
+
+export const deletePantryItem = async (itemId: string) => {
+  const { error } = await supabase
+    .from('pantry_items')
+    .delete()
+    .eq('id', itemId);
+
+  if (error) {
+    throw error;
+  }
+};
+
 export const updatePantryStock = async (itemId: string, stockAmount: number) => {
   const { data, error } = await supabase
     .from('pantry_items')
