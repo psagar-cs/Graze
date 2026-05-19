@@ -1359,7 +1359,6 @@ export function HomeScreen() {
             <View className="flex-row flex-wrap gap-2">
               <InfoPill label={formatCalories(suggestion.estimatedCalories)} />
               <InfoPill label={formatProtein(suggestion.estimatedProtein)} />
-              <InfoPill label={`${suggestion.estimatedPrepTimeMinutes} min`} />
               <InfoPill label={formatEffortLabel(suggestion.effortLevel)} />
             </View>
             <View className="gap-2">
