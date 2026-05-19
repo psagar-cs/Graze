@@ -1,5 +1,5 @@
 import { useAuth, useUser } from '@clerk/clerk-expo';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -127,7 +127,7 @@ const guideSectionContent: Record<
     title: 'What Graze is',
     subtitle: 'A pantry-aware food logger with deterministic meal suggestions built around the MVP goals that matter right now.',
     lines: [
-      'Graze is not using a generative AI recommender right now. Suggestions come from pantry-based patterns and a custom score.',
+      'Suggestions come from pantry-based patterns and a custom score.',
       'The MVP optimizes around calorie fit and protein fit first, then layers in effort, expiry urgency, coherence, and the selected priority mode.',
       'Active pantry items with stock available are the building blocks for quick logging, saved meals, and Next suggestions.',
     ],
@@ -372,11 +372,21 @@ export function HomeScreen() {
     mealServings: '1',
   });
   const [guideOpen, setGuideOpen] = useState(false);
-  const [guideFocus, setGuideFocus] = useState<GuideSectionKey>('overview');
   const [pendingDeletePantryItem, setPendingDeletePantryItem] = useState<PantryItem | null>(null);
   const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<string[]>([]);
   const [suggestionSeed, setSuggestionSeed] = useState(0);
   const [suggestionPriority, setSuggestionPriority] = useState<SuggestionPriority>('balanced');
+  const [highlightedGuideSection, setHighlightedGuideSection] = useState<GuideSectionKey | null>(null);
+  const guideScrollRef = useRef<ScrollView | null>(null);
+  const guideSectionOffsetsRef = useRef<Record<GuideSectionKey, number>>({
+    overview: 0,
+    today: 0,
+    log: 0,
+    pantry: 0,
+    suggestions: 0,
+    saved: 0,
+  });
+  const pendingGuideSectionRef = useRef<GuideSectionKey | null>(null);
 
   const activePantry = pantryItems.filter((item) => item.is_active);
   const stockedPantry = activePantry.filter((item) => hasAnyStock(item));
@@ -448,7 +458,6 @@ export function HomeScreen() {
   const pendingDeletePantryMealCount = pendingDeletePantryItem
     ? customMeals.filter((meal) => meal.ingredients.some((ingredient) => ingredient.pantry_item_id === pendingDeletePantryItem.id)).length
     : 0;
-  const focusedGuideSection = guideSectionContent[guideFocus];
 
   useEffect(() => {
     setDismissedSuggestionIds([]);
@@ -838,9 +847,43 @@ export function HomeScreen() {
     }
   };
 
-  const openGuide = (focus: GuideSectionKey = 'overview') => {
-    setGuideFocus(focus);
+  const scrollGuideToSection = (sectionKey: GuideSectionKey | null) => {
+    if (!guideScrollRef.current) {
+      return;
+    }
+
+    guideScrollRef.current.scrollTo({
+      animated: true,
+      y: sectionKey ? guideSectionOffsetsRef.current[sectionKey] : 0,
+    });
+  };
+
+  const triggerGuideHighlight = (sectionKey: GuideSectionKey | null) => {
+    setHighlightedGuideSection(sectionKey);
+  };
+
+  const openGuide = (sectionKey: GuideSectionKey | null = null) => {
+    pendingGuideSectionRef.current = sectionKey;
+
+    if (guideOpen) {
+      setTimeout(() => {
+        scrollGuideToSection(sectionKey);
+        triggerGuideHighlight(sectionKey);
+        pendingGuideSectionRef.current = null;
+      }, 0);
+      return;
+    }
+
+    triggerGuideHighlight(sectionKey);
     setGuideOpen(true);
+  };
+
+  const handleGuideShow = () => {
+    setTimeout(() => {
+      scrollGuideToSection(pendingGuideSectionRef.current);
+      triggerGuideHighlight(pendingGuideSectionRef.current);
+      pendingGuideSectionRef.current = null;
+    }, 50);
   };
 
   const addGroupedLogIngredient = () => {
@@ -1157,7 +1200,7 @@ export function HomeScreen() {
         <View className="mb-1 gap-3">
           <PrimaryButton label="Create custom meal" onPress={openNewCustomMeal} />
           <Pressable onPress={() => openGuide('saved')}>
-            <Text className="text-sm font-semibold text-pine">How saved meals work</Text>
+            <Text className="text-sm font-semibold text-pine underline">How saved meals work</Text>
           </Pressable>
         </View>
         {customMeals.length ? (
@@ -1234,7 +1277,7 @@ export function HomeScreen() {
         <View className="mb-1 gap-3">
           <PrimaryButton label="Add pantry item" onPress={openNewPantry} />
           <Pressable onPress={() => openGuide('pantry')}>
-            <Text className="text-sm font-semibold text-pine">Archive vs delete</Text>
+            <Text className="text-sm font-semibold text-pine underline">Archive vs delete</Text>
           </Pressable>
         </View>
         {sortedPantryItems.length ? (
@@ -1349,7 +1392,7 @@ export function HomeScreen() {
           </View>
           <Text className="text-sm leading-5 text-ink/65">{suggestionPriorityDescriptions[suggestionPriority]}</Text>
           <Pressable onPress={() => openGuide('suggestions')}>
-            <Text className="text-sm font-semibold text-pine">How suggestions work</Text>
+            <Text className="text-sm font-semibold text-pine underline">How suggestions work</Text>
           </Pressable>
         </View>
         <Text className="text-sm leading-5 text-ink/65">
@@ -1477,10 +1520,16 @@ export function HomeScreen() {
               </Text>
             </View>
             <View className="items-end gap-3">
-              <Pressable onPress={() => openGuide()}>
+              <Pressable
+                className="rounded-full border border-pine/15 bg-white px-4 py-2"
+                onPress={() => openGuide()}
+              >
                 <Text className="text-sm font-semibold text-pine">How it works</Text>
               </Pressable>
-              <Pressable onPress={() => signOut()}>
+              <Pressable
+                className="rounded-full border border-clay/15 bg-white px-4 py-2"
+                onPress={() => signOut()}
+              >
                 <Text className="text-sm font-semibold text-clay">Sign out</Text>
               </Pressable>
             </View>
@@ -1523,32 +1572,39 @@ export function HomeScreen() {
       <ModalSheet
         onClose={() => setGuideOpen(false)}
         open={guideOpen}
+        onShow={handleGuideShow}
+        scrollViewRef={guideScrollRef}
         title="How Graze works"
       >
         <SheetStack>
           <SheetSurface className="rounded-2xl bg-pine px-4 py-4">
             <Text className="text-sm uppercase tracking-[1.5px] text-white/70">Start here</Text>
-            <Text className="mt-2 font-display text-2xl text-white">{focusedGuideSection.title}</Text>
-            <Text className="mt-2 text-sm leading-5 text-white/80">{focusedGuideSection.subtitle}</Text>
+            <Text className="mt-2 font-display text-2xl text-white">How Graze works</Text>
+            <Text className="mt-2 text-sm leading-5 text-white/80">
+              A quick guide to how pantry items, logging, suggestions, and saved meals fit together in the app.
+            </Text>
           </SheetSurface>
           {guideSectionOrder.map((sectionKey) => {
             const section = guideSectionContent[sectionKey];
-            const isFocused = guideFocus === sectionKey;
+            const isHighlighted = highlightedGuideSection === sectionKey;
 
             return (
-              <SectionCard
+              <View
                 key={sectionKey}
-                subtitle={section.subtitle}
-                title={section.title}
+                onLayout={(event) => {
+                  guideSectionOffsetsRef.current[sectionKey] = event.nativeEvent.layout.y;
+                }}
               >
-                <View className={`gap-2 rounded-2xl px-4 py-4 ${isFocused ? 'bg-butter' : 'bg-oat'}`}>
-                  {section.lines.map((line) => (
-                    <Text className="text-sm leading-5 text-ink/70" key={line}>
-                      {line}
-                    </Text>
-                  ))}
-                </View>
-              </SectionCard>
+                <SectionCard subtitle={section.subtitle} title={section.title}>
+                  <View className={`gap-2 rounded-2xl px-4 py-4 ${isHighlighted ? 'bg-butter' : 'bg-oat'}`}>
+                    {section.lines.map((line) => (
+                      <Text className="text-sm leading-5 text-ink/70" key={line}>
+                        {line}
+                      </Text>
+                    ))}
+                  </View>
+                </SectionCard>
+              </View>
             );
           })}
         </SheetStack>

@@ -3,13 +3,16 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Modal,
+  type ModalProps,
   Platform,
   Pressable,
   ScrollView,
+  type ScrollViewProps,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import type { RefObject } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 type ButtonProps = {
@@ -139,15 +142,21 @@ export function ModalSheet({
   title,
   open,
   onClose,
+  onShow,
+  scrollViewRef,
+  scrollViewProps,
   children,
 }: {
   title: string;
   open: boolean;
   onClose: () => void;
+  onShow?: ModalProps['onShow'];
+  scrollViewRef?: RefObject<ScrollView | null>;
+  scrollViewProps?: ScrollViewProps;
   children: React.ReactNode;
 }) {
   return (
-    <Modal animationType="slide" transparent visible={open}>
+    <Modal animationType="slide" onShow={onShow} transparent visible={open}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         className="flex-1 justify-end"
@@ -159,7 +168,9 @@ export function ModalSheet({
               contentContainerStyle={{ paddingBottom: 24 }}
               keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
               keyboardShouldPersistTaps="handled"
+              ref={scrollViewRef}
               showsVerticalScrollIndicator={false}
+              {...scrollViewProps}
             >
               <View className="mb-4 flex-row items-center justify-between">
                 <Text className="font-display text-2xl text-pine">{title}</Text>
