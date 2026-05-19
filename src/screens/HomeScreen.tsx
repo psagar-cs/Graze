@@ -39,10 +39,12 @@ import type {
   PantryStockEntryMode,
   PantryUnit,
   Suggestion,
+  SuggestionPriority,
   SuggestionLogValues,
 } from '../types';
 
 type TabKey = 'today' | 'log' | 'pantry' | 'suggestions';
+type GuideSectionKey = 'overview' | 'today' | 'log' | 'pantry' | 'suggestions' | 'saved';
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: 'today', label: 'Today' },
@@ -94,6 +96,90 @@ const stockEntryOptions: { label: string; value: PantryStockEntryMode }[] = [
   { label: 'Amount in stock', value: 'amount' },
   { label: 'Servings in stock', value: 'servings' },
 ];
+
+const suggestionPriorityOptions: { label: string; value: SuggestionPriority }[] = [
+  { label: 'Balanced', value: 'balanced' },
+  { label: 'Easy', value: 'easy' },
+  { label: 'High protein', value: 'high_protein' },
+  { label: 'Use soon', value: 'use_soon' },
+  { label: 'Snack', value: 'snack' },
+];
+
+const suggestionPriorityDescriptions: Record<SuggestionPriority, string> = {
+  balanced: 'Balanced pantry suggestions',
+  easy: 'Prioritizing low-effort options',
+  high_protein: 'Prioritizing higher-protein options',
+  use_soon: 'Prioritizing ingredients that expire soon',
+  snack: 'Prioritizing snack-like options',
+};
+
+const guideSectionOrder: GuideSectionKey[] = ['overview', 'today', 'log', 'pantry', 'suggestions', 'saved'];
+
+const guideSectionContent: Record<
+  GuideSectionKey,
+  {
+    title: string;
+    subtitle: string;
+    lines: string[];
+  }
+> = {
+  overview: {
+    title: 'What Graze is',
+    subtitle: 'A pantry-aware food logger with deterministic meal suggestions built around the MVP goals that matter right now.',
+    lines: [
+      'Graze is not using a generative AI recommender right now. Suggestions come from pantry-based patterns and a custom score.',
+      'The MVP optimizes around calorie fit and protein fit first, then layers in effort, expiry urgency, coherence, and the selected priority mode.',
+      'Active pantry items with stock available are the building blocks for quick logging, saved meals, and Next suggestions.',
+    ],
+  },
+  today: {
+    title: 'Today',
+    subtitle: 'This tab keeps the daily target model simple so the rest of the app has a clear anchor.',
+    lines: [
+      'Calories and protein are the two user goals the MVP tracks explicitly.',
+      'Remaining calories and protein help shape which suggestions feel like a better fit next.',
+      'Recent entries are editable so you can correct accidental logs without breaking pantry-linked inventory.',
+    ],
+  },
+  log: {
+    title: 'Log',
+    subtitle: 'Logging is split into fast pantry-based actions and a fallback for food that never lived in your pantry.',
+    lines: [
+      'Quick add is for stocked pantry staples you use often.',
+      'Manual entry is the catch-all for eating out or one-off food that should not deduct pantry stock.',
+      'Saving a recommendation creates a reusable pantry-based meal template that you can rename later.',
+    ],
+  },
+  pantry: {
+    title: 'Pantry',
+    subtitle: 'Pantry items are the reusable ingredients that power inventory-aware logging and suggestions.',
+    lines: [
+      'Archived items stay in your account but stop participating in suggestions and quick logging.',
+      'Clear stock keeps the ingredient but marks it as unavailable until you restock.',
+      'Delete is permanent and can remove saved meals that depend on that ingredient, so archive is the safer hide mechanic.',
+      'Expiry dates are optional, but when present they can suppress expired items and boost soon-to-expire ones.',
+    ],
+  },
+  suggestions: {
+    title: 'Next',
+    subtitle: 'Suggestions are deterministic pantry combinations ranked by a custom score plus the currently selected priority mode.',
+    lines: [
+      'Balanced tries to find sensible pantry meals that fit your remaining calories and protein.',
+      'Easy prefers lower-friction options first, with no-prep items ahead of assembly, microwave, and cook.',
+      'High protein pushes protein-forward ideas higher, Use soon lifts ingredients nearing expiry, and Snack is the snack-first mode.',
+      'Not feeling it rotates away the current exact meal idea, while Save meal turns a suggestion into a reusable custom meal.',
+    ],
+  },
+  saved: {
+    title: "What's saved where",
+    subtitle: 'Graze separates ingredients, reusable meal templates, and logged history so each part of the app stays understandable.',
+    lines: [
+      'Pantry items are the ingredient-level building blocks.',
+      'Saved meals are pantry-based templates that log as one grouped entry while deducting each linked ingredient behind the scenes.',
+      'Logged meals affect pantry stock when they came from pantry ingredients, while manual out-of-pantry logs only affect history and targets.',
+    ],
+  },
+};
 
 const validateNumber = (value: string) => Number.isFinite(Number(value)) && value.trim() !== '';
 
@@ -286,6 +372,7 @@ export function HomeScreen() {
   });
   const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<string[]>([]);
   const [suggestionSeed, setSuggestionSeed] = useState(0);
+  const [suggestionPriority, setSuggestionPriority] = useState<SuggestionPriority>('balanced');
 
   const activePantry = pantryItems.filter((item) => item.is_active);
   const stockedPantry = activePantry.filter((item) => hasAnyStock(item));
@@ -349,6 +436,7 @@ export function HomeScreen() {
     todaySummary,
     now: new Date(),
     goal: 'balanced',
+    priority: suggestionPriority,
     excludedSuggestionIds: dismissedSuggestionIds,
     variationSeed: suggestionSeed,
   });
@@ -363,6 +451,11 @@ export function HomeScreen() {
     profile?.daily_calorie_target,
     profile?.daily_protein_target,
   ]);
+
+  useEffect(() => {
+    setDismissedSuggestionIds([]);
+    setSuggestionSeed(0);
+  }, [suggestionPriority]);
 
   const syncTargets = () => {
     if (!profile) {
@@ -784,6 +877,7 @@ export function HomeScreen() {
       todaySummary,
       now: new Date(),
       goal: 'balanced',
+      priority: suggestionPriority,
       excludedSuggestionIds: nextExcludedIds,
       variationSeed: nextSeed,
     });
@@ -1203,6 +1297,23 @@ export function HomeScreen() {
             Suggestions are built only from active pantry items and ranked for effort, coherence, and what you still have left today.
           </Text>
         )}
+        <View className="gap-2">
+          <Text className="text-sm font-medium text-ink/70">Priority</Text>
+          <View className="flex-row flex-wrap gap-2">
+            {suggestionPriorityOptions.map((option) => (
+              <Pressable
+                className={`rounded-full border px-3 py-2 ${suggestionPriority === option.value ? 'border-pine bg-pine' : 'border-moss/20 bg-white'}`}
+                key={option.value}
+                onPress={() => setSuggestionPriority(option.value)}
+              >
+                <Text className={`text-sm font-medium ${suggestionPriority === option.value ? 'text-white' : 'text-ink/70'}`}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text className="text-sm leading-5 text-ink/65">{suggestionPriorityDescriptions[suggestionPriority]}</Text>
+        </View>
         <Text className="text-sm leading-5 text-ink/65">
           Showing 3 good options from your pantry right now. Refresh to cycle through other valid combinations.
         </Text>

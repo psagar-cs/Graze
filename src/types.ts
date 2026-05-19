@@ -127,6 +127,8 @@ export type SuggestionPreview = {
 
 export type SuggestionGoal = 'balanced' | 'bulk';
 
+export type SuggestionPriority = 'balanced' | 'easy' | 'high_protein' | 'use_soon' | 'snack';
+
 export type SuggestionIngredient = {
   pantryItemId: string;
   name: string;
