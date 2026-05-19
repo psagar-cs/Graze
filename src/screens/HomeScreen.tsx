@@ -838,6 +838,11 @@ export function HomeScreen() {
     }
   };
 
+  const openGuide = (focus: GuideSectionKey = 'overview') => {
+    setGuideFocus(focus);
+    setGuideOpen(true);
+  };
+
   const addGroupedLogIngredient = () => {
     setEditGroupedLogForm((current) => ({
       ...current,
@@ -1149,8 +1154,11 @@ export function HomeScreen() {
       </SectionCard>
 
       <SectionCard subtitle="Reusable pantry-based meals that log as one grouped entry." title="Saved meals">
-        <View className="mb-1">
+        <View className="mb-1 gap-3">
           <PrimaryButton label="Create custom meal" onPress={openNewCustomMeal} />
+          <Pressable onPress={() => openGuide('saved')}>
+            <Text className="text-sm font-semibold text-pine">How saved meals work</Text>
+          </Pressable>
         </View>
         {customMeals.length ? (
           <View className="gap-3">
@@ -1223,8 +1231,11 @@ export function HomeScreen() {
   const renderPantry = () => (
     <View className="gap-4">
       <SectionCard subtitle="Staples should be easy to add, easy to tweak, and easy to hide." title="Your pantry">
-        <View className="mb-1">
+        <View className="mb-1 gap-3">
           <PrimaryButton label="Add pantry item" onPress={openNewPantry} />
+          <Pressable onPress={() => openGuide('pantry')}>
+            <Text className="text-sm font-semibold text-pine">Archive vs delete</Text>
+          </Pressable>
         </View>
         {sortedPantryItems.length ? (
           <View className="gap-3">
@@ -1337,6 +1348,9 @@ export function HomeScreen() {
             ))}
           </View>
           <Text className="text-sm leading-5 text-ink/65">{suggestionPriorityDescriptions[suggestionPriority]}</Text>
+          <Pressable onPress={() => openGuide('suggestions')}>
+            <Text className="text-sm font-semibold text-pine">How suggestions work</Text>
+          </Pressable>
         </View>
         <Text className="text-sm leading-5 text-ink/65">
           Showing 3 good options from your pantry right now. Refresh to cycle through other valid combinations.
@@ -1462,9 +1476,14 @@ export function HomeScreen() {
                 {user?.primaryEmailAddress?.emailAddress ?? 'Signed in'}
               </Text>
             </View>
-            <Pressable onPress={() => signOut()}>
-              <Text className="text-sm font-semibold text-clay">Sign out</Text>
-            </Pressable>
+            <View className="items-end gap-3">
+              <Pressable onPress={() => openGuide()}>
+                <Text className="text-sm font-semibold text-pine">How it works</Text>
+              </Pressable>
+              <Pressable onPress={() => signOut()}>
+                <Text className="text-sm font-semibold text-clay">Sign out</Text>
+              </Pressable>
+            </View>
           </View>
           <View className="mt-5 flex-row rounded-full bg-white p-1">
             {tabs.map((tab) => (
@@ -1500,6 +1519,40 @@ export function HomeScreen() {
           />
         </ScrollView>
       </View>
+
+      <ModalSheet
+        onClose={() => setGuideOpen(false)}
+        open={guideOpen}
+        title="How Graze works"
+      >
+        <SheetStack>
+          <SheetSurface className="rounded-2xl bg-pine px-4 py-4">
+            <Text className="text-sm uppercase tracking-[1.5px] text-white/70">Start here</Text>
+            <Text className="mt-2 font-display text-2xl text-white">{focusedGuideSection.title}</Text>
+            <Text className="mt-2 text-sm leading-5 text-white/80">{focusedGuideSection.subtitle}</Text>
+          </SheetSurface>
+          {guideSectionOrder.map((sectionKey) => {
+            const section = guideSectionContent[sectionKey];
+            const isFocused = guideFocus === sectionKey;
+
+            return (
+              <SectionCard
+                key={sectionKey}
+                subtitle={section.subtitle}
+                title={section.title}
+              >
+                <View className={`gap-2 rounded-2xl px-4 py-4 ${isFocused ? 'bg-butter' : 'bg-oat'}`}>
+                  {section.lines.map((line) => (
+                    <Text className="text-sm leading-5 text-ink/70" key={line}>
+                      {line}
+                    </Text>
+                  ))}
+                </View>
+              </SectionCard>
+            );
+          })}
+        </SheetStack>
+      </ModalSheet>
 
       <ModalSheet
         onClose={() => {
